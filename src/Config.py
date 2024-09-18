@@ -21,7 +21,7 @@ learning_rate = 0.0003
 # oppler and w para
 fc = 6 * 10e9
 c = 3 * 10e8
-v = 10
+v = 30
 
 # using_model = "rbf"
 using_model = "dnn"

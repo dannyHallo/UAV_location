@@ -28,14 +28,34 @@ def point_in_boundary(detecting_region_info, pt):
     )
 
 
+def get_triangle_size(v1, v2, v3):
+    # Arrange the vertices into a 3x3 matrix, where the last column is all ones
+    matrix = np.array([
+        [v1[0], v1[1], 1],
+        [v2[0], v2[1], 1],
+        [v3[0], v3[1], 1]
+    ])
+
+    # Calculate the determinant of the matrix
+    det = np.linalg.det(matrix)
+
+    # The area of the triangle is half the absolute value of the determinant
+    area = 0.5 * np.abs(det)
+
+    return area
+
+
 def get_random_sample_in_detecting_region(detecting_region_info):
     v1 = detecting_region_info.v1
     v2 = detecting_region_info.v2
     v3 = detecting_region_info.v3
     v4 = detecting_region_info.v4
 
+    tri_size_1 = get_triangle_size(v1, v2, v3)
+    tri_size_2 = get_triangle_size(v2, v3, v4)
+
     # Randomly choose one of the two triangles to place a point
-    if np.random.rand() < 0.5:
+    if np.random.rand() < tri_size_1 / (tri_size_1 + tri_size_2):
         # Working with triangle 1 (p123)
         base_point = v1
         edge0 = v2 - v1
@@ -104,7 +124,7 @@ def try_create_line_in_bounding_box(a_b_distance, detecting_region_info, step_co
         [_angle, _coords_a] = random_walk(
             angle_change_limit_per_step, length_per_step, _angle, _coords_a
         )
-        _coords_b = get_coords_b(_coords_a, _angle)
+        _coords_b = get_coords_b(a_b_distance, _coords_a, _angle)
 
         in_boundary = point_in_boundary(
             detecting_region_info, _coords_a
