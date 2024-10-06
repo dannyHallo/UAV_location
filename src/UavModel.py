@@ -7,7 +7,7 @@ class KANModel(nn.Module):
     def __init__(self):
         super(KANModel, self).__init__()
         # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
-        self.model = KAN(width=[6, 128, 256, 512, 512, 512, 256, 128, 64, 32, 2], grid=3, k=3)
+        self.model = KAN(width=[6, 5, 2], grid=3, k=3,seed=42)
 
     def forward(self, x):
         return self.model(x)
@@ -87,7 +87,7 @@ class UavModel(nn.Module):
         # reshape input to discard x temporarily for the first module
         x = x.view(-1, features_len)
 
-        x = self.dnn1(x)
+        x = self.kan(x)
 
         # reshape x to original shape (restoring seq)
         x = x.view(batch_size, seq_len, 2)
