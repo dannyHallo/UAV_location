@@ -1,6 +1,16 @@
 # 定义更深的神经网络模型
 import torch
 import torch.nn as nn
+from src.kan import KAN
+
+class KANModel(nn.Module):
+    def __init__(self):
+        super(KANModel, self).__init__()
+        # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
+        self.model = KAN(width=[6, 128, 256, 512, 512, 512, 256, 128, 64, 32, 2], grid=3, k=3)
+
+    def forward(self, x):
+        return self.model(x)
 
 
 class DnnModule1(nn.Module):
@@ -65,7 +75,8 @@ class LSTMModule(nn.Module):
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        self.dnn1 = DnnModule1()
+        self.kan = KANModel()
+        # self.dnn1 = DnnModule1()
         self.lstm = LSTMModule(input_dim=2, output_dim=2,
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
         # self.dnn2 = DnnModule2(dropout_rate=0.35)

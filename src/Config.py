@@ -5,7 +5,7 @@ receiver_position_1 = np.array([200, 0])
 receiver_position_2 = np.array([100, 100])
 receiver_position_3 = np.array([300, 150])
 
-train_num_of_lines_to_generate = 102400
+train_num_of_lines_to_generate = 100
 test_set_long_num = 512
 test_set_short_num = 2048
 step_count_per_line = 5
