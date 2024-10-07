@@ -27,3 +27,6 @@ v = 30
 # using_model = "rbf"
 using_model = "dnn"
 # using_model = "Transformer"
+optimizer = "LBFGS"
+# optimizer = "Adam"
+
