@@ -1,0 +1,10 @@
+# TODO: make this work properly (add pytorch, etc.)
+
+matplotlib
+numpy
+scikit_learn
+setuptools
+sympy
+torch
+tqdm
+pandas
