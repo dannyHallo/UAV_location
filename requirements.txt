@@ -7,5 +7,6 @@ setuptools
 ipykernel
 sympy
 torch
+PyYAML
 tqdm
 pandas
