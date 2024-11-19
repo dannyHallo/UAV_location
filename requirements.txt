@@ -4,6 +4,7 @@ matplotlib
 numpy
 scikit_learn
 setuptools
+ipykernel
 sympy
 torch
 tqdm
