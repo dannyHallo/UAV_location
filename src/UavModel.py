@@ -34,7 +34,7 @@ class DnnModule1(nn.Module):
         self.bn8 = nn.BatchNorm1d(64)
         self.fc9 = nn.Linear(64, 32)
         self.bn9 = nn.BatchNorm1d(32)
-        self.fc10 = nn.Linear(32, 2)
+        self.fc10 = nn.Linear(32, 3)
         # Activation function can be assigned as a member variable
         self.activation = nn.ReLU()
 
@@ -75,9 +75,9 @@ class LSTMModule(nn.Module):
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        self.kan = KANModel()
-        # self.dnn1 = DnnModule1()
-        self.lstm = LSTMModule(input_dim=2, output_dim=2,
+        # self.kan = KANModel()
+        self.dnn1 = DnnModule1()
+        self.lstm = LSTMModule(input_dim=3, output_dim=3,
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
 
@@ -87,10 +87,11 @@ class UavModel(nn.Module):
         # reshape input to discard x temporarily for the first module
         x = x.view(-1, features_len)
 
-        x = self.kan(x)
+        # x = self.kan(x)
+        x = self.dnn1(x)
 
         # reshape x to original shape (restoring seq)
-        x = x.view(batch_size, seq_len, 2)
+        x = x.view(batch_size, seq_len, 3)
 
         x = self.lstm(x)
         # lstm already returns the last hidden state of the sequences, no need to reshape
