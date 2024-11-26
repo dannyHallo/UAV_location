@@ -5,9 +5,9 @@ receiver_position_1 = np.array([200, 0])
 receiver_position_2 = np.array([100, 100])
 receiver_position_3 = np.array([300, 150])
 
-train_num_of_lines_to_generate = 1000
+train_num_of_lines_to_generate = 50000
 test_set_long_num = 512
-test_set_short_num = 2048
+test_set_short_num = 256
 step_count_per_line = 5
 length_per_step = 0.2
 angle_change_limit_per_step = 0.1
@@ -27,6 +27,8 @@ v = 30
 # using_model = "rbf"
 using_model = "dnn"
 # using_model = "Transformer"
-optimizer = "LBFGS"
-# optimizer = "Adam"
+
+# FIXME:
+# optimizer = "LBFGS"
+optimizer = "Adam"
 
