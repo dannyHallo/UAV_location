@@ -4,6 +4,8 @@ results/
 
 **/.DS_Store
 
+.vscode/
+
 # the followings are from template
 
 # Byte-compiled / optimized / DLL files
