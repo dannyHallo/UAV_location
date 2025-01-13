@@ -5,15 +5,15 @@ receiver_position_1 = np.array([200, 0])
 receiver_position_2 = np.array([100, 100])
 receiver_position_3 = np.array([300, 150])
 
-train_num_of_lines_to_generate = 500
-test_set_long_num = 512
+train_num_of_lines_to_generate = 200000
+test_set_long_num = 256
 test_set_short_num = 256
 step_count_per_line = 5
 length_per_step = 0.2
 angle_change_limit_per_step = 0.1
 a_b_distance = 0.05
 
-epoch = 1000
+epoch = 300
 train_batch_size = 128
 # test_batch_size = test_set_num
 
@@ -31,4 +31,3 @@ using_model = "dnn"
 # FIXME:
 # optimizer = "LBFGS"
 optimizer = "Adam"
-
