@@ -76,22 +76,24 @@ class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
         # self.kan = KANModel()
-        self.dnn1 = DnnModule1()
-        self.lstm = LSTMModule(input_dim=3, output_dim=3,
+        # self.dnn1 = DnnModule1()
+        self.lstm = LSTMModule(input_dim=6, output_dim=3,
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
 
     def forward(self, x):
         batch_size, seq_len, features_len = x.size()
 
+        # num_of_lines_to_generate, step_count_per_line, 6 (per point)
+
         # reshape input to discard x temporarily for the first module
-        x = x.view(-1, features_len)
+        # x = x.view(-1, features_len)
 
         # x = self.kan(x)
-        x = self.dnn1(x)
+        # x = self.dnn1(x)
 
         # reshape x to original shape (restoring seq)
-        x = x.view(batch_size, seq_len, 3)
+        # x = x.view(batch_size, seq_len, 3)
 
         x = self.lstm(x)
         # lstm already returns the last hidden state of the sequences, no need to reshape
