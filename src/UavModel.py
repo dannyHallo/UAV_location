@@ -3,14 +3,14 @@ import torch
 import torch.nn as nn
 from src.kan import KAN
 
-class KANModel(nn.Module):
-    def __init__(self):
-        super(KANModel, self).__init__()
-        # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
-        self.model = KAN(width=[6, 5, 2], grid=3, k=3,seed=42)
+# class KANModel(nn.Module):
+#     def __init__(self):
+#         super(KANModel, self).__init__()
+#         # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
+#         self.model = KAN(width=[6, 5, 2], grid=3, k=3,seed=42)
 
-    def forward(self, x):
-        return self.model(x)
+#     def forward(self, x):
+#         return self.model(x)
 
 
 class DnnModule1(nn.Module):
@@ -34,7 +34,7 @@ class DnnModule1(nn.Module):
         self.bn8 = nn.BatchNorm1d(64)
         self.fc9 = nn.Linear(64, 32)
         self.bn9 = nn.BatchNorm1d(32)
-        self.fc10 = nn.Linear(32, 3)
+        self.fc10 = nn.Linear(32, 2) # MARK
         # Activation function can be assigned as a member variable
         self.activation = nn.ReLU()
 
@@ -77,7 +77,7 @@ class UavModel(nn.Module):
         super(UavModel, self).__init__()
         # self.kan = KANModel()
         self.dnn1 = DnnModule1()
-        self.lstm = LSTMModule(input_dim=3, output_dim=3,
+        self.lstm = LSTMModule(input_dim=2, output_dim=2, # MARK
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
 
@@ -91,7 +91,7 @@ class UavModel(nn.Module):
         x = self.dnn1(x)
 
         # reshape x to original shape (restoring seq)
-        x = x.view(batch_size, seq_len, 3)
+        x = x.view(batch_size, seq_len, 2) # MARK
 
         x = self.lstm(x)
         # lstm already returns the last hidden state of the sequences, no need to reshape
