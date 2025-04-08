@@ -1,6 +1,7 @@
 # 定义更深的神经网络模型
 import torch
 import torch.nn as nn
+import torch.nn.functional as f
 from src.kan import KAN
 
 # class KANModel(nn.Module):
@@ -71,14 +72,33 @@ class LSTMModule(nn.Module):
 
         return final_output
 
+class TransformerModule(nn.Module):
+    def __init__(self, input_dim, output_dim, d_model, nhead, num_layers, dropout_rate):
+        super(TransformerModule, self).__init__()
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout_rate)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)
+        self.input_fc = nn.Linear(input_dim, d_model)
+        self.output_fc = nn.Linear(d_model, output_dim)
+
+    def forward(self, x):
+        # Reshape input to (seq_len, batch_size, input_dim)
+        # x = x.permute(1, 0, 2)
+        x = self.input_fc(x)
+        x = self.transformer_encoder(x)
+        x = self.output_fc(x)
+        # Take the last time step output
+        x = x[-1, :, :]  # shape: [batch_size, output_dim]
+        return x
 
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
         # self.kan = KANModel()
         self.dnn1 = DnnModule1()
+        self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
         self.lstm = LSTMModule(input_dim=2, output_dim=2, # MARK
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
+        
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
 
     def forward(self, x):
@@ -90,12 +110,22 @@ class UavModel(nn.Module):
         # x = self.kan(x)
         x = self.dnn1(x)
 
+        x = x.view(seq_len,batch_size,2)
+        x = self.transformer(x)
+        # print(x.shape)
+        
         # reshape x to original shape (restoring seq)
-        x = x.view(batch_size, seq_len, 2) # MARK
+        # x = x.view(batch_size, seq_len, 2) # MARK
 
-        x = self.lstm(x)
+        # x = self.lstm(x)
         # lstm already returns the last hidden state of the sequences, no need to reshape
 
-        # x = self.dnn2(x)
+        # print(x.shape)
+        
+        # print(x.shape)
+        # x = x.permute(1, 0, 2)
+        
 
+        # x = self.dnn2(x)
+        
         return x

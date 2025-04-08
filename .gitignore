@@ -163,3 +163,4 @@ dmypy.json
 cython_debug/
 
 models/*
+vis/option1_seeds

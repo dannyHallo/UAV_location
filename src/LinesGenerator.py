@@ -76,6 +76,17 @@ def get_random_sample_in_detecting_region(detecting_region_info, rng=None):
     return base_point + edge0 * x + edge1 * y
 
 
+def generate_bspline_control_points(detecting_region_info,num_control_points,rng=None):
+    '''Generate random control points within the detecting region'''
+    if rng is None:
+        rng = np.random
+    
+    control_points = []
+    for _ in range(num_control_points):
+        point = get_random_sample_in_detecting_region(detecting_region_info,rng=rng)
+        control_points.append(point)
+    return np.array(control_points)
+
 def random_angle_change(original_angle, angle_change_tolerance, rng=None):
     """
     Return a new angle by randomly perturbing the original angle
