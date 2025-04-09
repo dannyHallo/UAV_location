@@ -20,12 +20,19 @@ def get_labels(detecting_region_info, lines_a):
     return np.array(labels)
 
 
-def get_labels_coords(lines_a):
-    labels = []
-    for line in lines_a:
-        for coord_a in line:
-            labels.append(coord_a)
-    return np.array(labels)
+def extract_coords_from_lines(lines):
+    """
+    Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
+    Each coordinate is a 2D point.
+    Args:
+        lines: A list of lines, where each line is a list of coordinates.
+    Returns:
+        A numpy array containing all coordinates from the lines.
+    """
+    coords = []
+    for line in lines:
+        coords.extend(line)
+    return np.array(coords)
 
 
 def generateFeaturesAndLabels(
@@ -37,8 +44,7 @@ def generateFeaturesAndLabels(
     step_count_per_line,
 ):
     features = np.concatenate((w, doppler), axis=1)
-    # labels = get_labels(detecting_region_info, lines_a)
-    labels = get_labels_coords(lines_a)
+    labels = extract_coords_from_lines(lines_a)
     reshaped_features = features.reshape(
         num_of_lines_to_generate, step_count_per_line, 6
     )

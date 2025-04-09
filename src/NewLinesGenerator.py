@@ -311,7 +311,10 @@ def sample_trajectory_at_time(trajectory, timestamps, sample_time):
     return trajectory[-1]
 
 def generate_lines_from_trajectory(trajectory_generator, t1, t2):
-    """从轨迹生成器生成两条采样线"""
+    """从轨迹生成器生成两条采样线
+    数据格式: numpy[点的xy坐标 (2), 总点数 (n)]
+    """
+    
     trajectory = np.array(trajectory_generator.trajectory)
     timestamps = np.array(trajectory_generator.timestamps)
     
@@ -336,7 +339,7 @@ def generate_lines_from_trajectory(trajectory_generator, t1, t2):
     
     return np.array(lines_a), np.array(lines_b)
 
-def generate_lines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5):
+def generateLines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5, seed=42):
     """生成指定数量的线对
     
     Args:
@@ -345,17 +348,18 @@ def generate_lines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5):
         t1, t2: 采样间隔参数
         
     Returns:
-        tuple: (lines_a, lines_b)，两个形状为(n, x, 2)的数组，
+        tuple: (lines_a, lines_b)，两个 list，每个 list 中包含多条轨迹, 每条轨迹点的数量不一定相同
                其中n是轨迹条数，x是每条轨迹上的采样点数
     """
-    # 设置随机种子以便结果可重现
-    random.seed(42)
-    np.random.seed(42)
+    random.seed(seed)
+    np.random.seed(seed)
     
     # 生成轨迹
     trajectories = generate_multiple_trajectories(num_lines, detecting_region_info)
     
     # 初始化存储所有轨迹的列表
+    # lines 数据格式: list[轨迹1, 轨迹2, ...], 每条轨迹是一个numpy数组, n1, n2, n3... 不要求相同
+    # 轨迹数据格式: numpy[总点数 (n), 点的xy坐标 (2)]
     all_lines_a = []
     all_lines_b = []
     
@@ -365,9 +369,13 @@ def generate_lines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5):
         all_lines_a.append(lines_a)
         all_lines_b.append(lines_b)
     
-    # 将列表转换为numpy数组，形状为(n, x, 2)
-    if all_lines_a and all_lines_b:
-        return np.array(all_lines_a), np.array(all_lines_b)
-    else:
-        # 如果没有生成有效轨迹，返回空数组
-        return np.array([]), np.array([])
+    return all_lines_a, all_lines_b
+
+
+def part_line(step_count_per_line, long_line):
+    """
+    
+    """
+
+def partLines(step_count_per_line, long_lines):
+    

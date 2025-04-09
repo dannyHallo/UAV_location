@@ -142,20 +142,28 @@ def get_angle_theta(detecting_region_info, coords_A, coords_B):
         np.radians(theta4),  # theta4
     ]
 
+def extract_coords_from_lines(lines):
+    """
+    Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
+    Each coordinate is a 2D point.
+    Args:
+        lines: A list of lines, where each line is a list of coordinates.
+    Returns:
+        A numpy array containing all coordinates from the lines.
+    """
+    coords = []
+    for line in lines:
+        coords.extend(line)
+    return np.array(coords)
 
 def generateWAndDoppler(detecting_region_info, doppler_info, lines_a, lines_b):
-    coords_a = []
-    for line in lines_a:
-        for point in line:
-            coords_a.append(point)
-    coords_a = np.array(coords_a)
+    """
+    lines 输入格式: 见 NewLinesGenerator.py
+    """
 
-    coords_b = []
-    for line in lines_b:
-        for point in line:
-            coords_b.append(point)
-    coords_b = np.array(coords_b)
-
+    coords_a = extract_coords_from_lines(lines_a)
+    coords_b = extract_coords_from_lines(lines_b)
+    
     data_length = np.shape(coords_a)[0]
 
     [phi1, phi2, phi3, phi4] = get_angle_phi(

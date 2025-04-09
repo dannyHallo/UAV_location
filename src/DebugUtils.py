@@ -2,6 +2,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
 
+def printLinesShape(lines):
+    # Print the shape of the lines array
+    print("Total lines: ", len(lines))
+    for i in range(len(lines)):
+        print("Line ", i, " shape: ", lines[i].shape)
+        
 def visualizeLines(detecting_region_info, lines, color='r'):
     # For visualization purposes, we will use matplotlib to plot the lines and the detecting region.
 
