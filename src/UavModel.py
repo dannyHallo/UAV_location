@@ -94,9 +94,9 @@ class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
         # self.kan = KANModel()
-        self.dnn1 = DnnModule1()
-        self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
-        self.lstm = LSTMModule(input_dim=2, output_dim=2, # MARK
+        # self.dnn1 = DnnModule1()
+        # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
+        self.lstm = LSTMModule(input_dim=6, output_dim=2, # MARK
                                hidden_dim=128, num_layers=2, dropout_rate=0.2)
         
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
@@ -108,16 +108,16 @@ class UavModel(nn.Module):
         x = x.view(-1, features_len)
 
         # x = self.kan(x)
-        x = self.dnn1(x)
+        # x = self.dnn1(x)
 
-        x = x.view(seq_len,batch_size,2)
-        x = self.transformer(x)
+        # x = x.view(seq_len,batch_size,2)
+        # x = self.transformer(x)
         # print(x.shape)
         
         # reshape x to original shape (restoring seq)
-        # x = x.view(batch_size, seq_len, 2) # MARK
+        x = x.view(batch_size, seq_len, 6) # MARK
+        x = self.lstm(x)
 
-        # x = self.lstm(x)
         # lstm already returns the last hidden state of the sequences, no need to reshape
 
         # print(x.shape)
