@@ -629,7 +629,7 @@ if __name__ == "__main__":
     
     # 生成轨迹和对应的线对
     print("开始生成轨迹和采样线...")
-    all_lines_a, all_lines_b = generate_lines(quad_vertices, num_lines=1, t1=0.01, t2=0.2)
+    all_lines_a, all_lines_b = generate_lines(quad_vertices, num_lines=1, t1=0.1, t2=0.2)
     
     # 计算线长
     for i in range(len(all_lines_a)):

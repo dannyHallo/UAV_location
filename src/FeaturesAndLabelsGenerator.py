@@ -36,13 +36,12 @@ def extract_coords_from_lines(lines):
 
 
 def generateFeaturesAndLabels(
-    detecting_region_info,
     lines_a,
     w,
     doppler,
-    num_of_lines_to_generate,
     step_count_per_line,
 ):
+    num_of_lines_to_generate=len(lines_a)
     features = np.concatenate((w, doppler), axis=1)
     labels = extract_coords_from_lines(lines_a)
     reshaped_features = features.reshape(

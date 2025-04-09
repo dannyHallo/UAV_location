@@ -1,6 +1,7 @@
 import numpy as np
 import random
 
+
 class TrajectoryGenerator:
     def __init__(self, velocity=20.0, max_acceleration=25.0, name=None):
         """初始化轨迹生成器"""
@@ -374,8 +375,52 @@ def generateLines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5, seed=42):
 
 def part_line(step_count_per_line, long_line):
     """
+    将一条长线分成多条短线段
     
+    参数:
+    step_count_per_line (int): 每条短线段包含的点数
+    long_line (numpy.ndarray): 长线上所有点的坐标，形状为(n, 2)，其中n是点的数量
+    
+    返回:
+    list: 包含多条短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
     """
+    if len(long_line) < step_count_per_line:
+        # 如果长线上的点数少于所需的步数，则直接跳出
+        return []
+    
+    # 计算可以生成的短线段数量
+    num_lines = len(long_line) - step_count_per_line + 1
+    
+    # 生成短线段
+    short_lines = []
+    for i in range(num_lines):
+        # 提取当前短线段包含的点
+        short_line = long_line[i:i+step_count_per_line]
+        short_lines.append(short_line)
+    
+    return short_lines
+
 
 def partLines(step_count_per_line, long_lines):
+    """
+    将多条长线分别划分成短线段
+    
+    参数:
+    step_count_per_line (int): 每条短线段包含的点数
+    long_lines (list): 包含多条长线的列表，每条长线是一个形状为(n, 2)的numpy数组
+    
+    返回:
+    list: 包含所有短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
+    """
+    all_short_lines = []
+    
+    # 处理每条长线
+    for long_line in long_lines:
+        # 调用part_line函数将当前长线划分成短线段
+        short_lines = part_line(step_count_per_line, long_line)
+        
+        # 将当前长线生成的短线段添加到总列表中
+        all_short_lines.extend(short_lines)
+    
+    return all_short_lines
     
