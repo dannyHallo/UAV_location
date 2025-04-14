@@ -15,158 +15,158 @@ class TrajectoryGenerator:
         self.time = 0.0
         self.key_points = []
         self.key_times = []
-    
+
     def add_straight_line(self, start_point, end_point, duration):
         """添加匀速直线段"""
         start_point = np.array(start_point)
         end_point = np.array(end_point)
-        
+
         if len(self.key_points) == 0:
             self.key_points.append(start_point)
             self.key_times.append(self.time)
         self.key_points.append(end_point)
         self.key_times.append(self.time + duration)
-        
+
         num_samples = max(int(duration * 10), 2)
         times = np.linspace(0, duration, num_samples)
-        
+
         for t in times:
             alpha = t / duration
             position = (1 - alpha) * start_point + alpha * end_point
             self.trajectory.append(position)
             self.timestamps.append(self.time + t)
-        
+
         velocity_vector = (end_point - start_point) / duration
         speed = np.linalg.norm(velocity_vector)
         if speed > 0:
             velocity_unit = velocity_vector / speed
         else:
             velocity_unit = np.array([1.0, 0.0])
-            
+
         self.last_velocity_direction = velocity_unit
-        
+
         for _ in range(num_samples):
             self.velocities.append(velocity_unit * self.velocity)
             self.accelerations.append(np.zeros(2))
-        
+
         self.time += duration
         return velocity_unit
-    
+
     def add_curved_transition(self, start_point, end_point, start_direction, end_direction, control_point_offset_factor=0.7):
         """添加确保速度连续性的平滑弯曲过渡"""
         start_point = np.array(start_point)
         end_point = np.array(end_point)
         start_direction = np.array(start_direction)
         end_direction = np.array(end_direction)
-        
+
         if np.allclose(start_point, end_point):
             return None
-        
+
         if len(self.key_points) == 0:
             self.key_points.append(start_point)
             self.key_times.append(self.time)
-        
+
         if np.linalg.norm(start_direction) > 0:
             start_direction = start_direction / np.linalg.norm(start_direction)
         else:
             start_direction = np.array([1.0, 0.0])
-            
+
         if np.linalg.norm(end_direction) > 0:
             end_direction = end_direction / np.linalg.norm(end_direction)
         else:
             end_direction = np.array([1.0, 0.0])
-        
+
         direct_distance = np.linalg.norm(end_point - start_point)
-        
+
         control_distance_1 = direct_distance * control_point_offset_factor
         control_point_1 = start_point + start_direction * control_distance_1
-        
+
         control_distance_2 = direct_distance * control_point_offset_factor
         control_point_2 = end_point - end_direction * control_distance_2
-        
-        curve_length = (np.linalg.norm(control_point_1 - start_point) + 
-                       np.linalg.norm(control_point_2 - control_point_1) + 
-                       np.linalg.norm(end_point - control_point_2))
-        
+
+        curve_length = (np.linalg.norm(control_point_1 - start_point) +
+                        np.linalg.norm(control_point_2 - control_point_1) +
+                        np.linalg.norm(end_point - control_point_2))
+
         duration = curve_length / self.velocity
-        
+
         self.key_points.append(end_point)
         self.key_times.append(self.time + duration)
-        
+
         num_samples = max(int(duration * 30), 30)
         t_values = np.linspace(0, 1, num_samples)
-        
+
         positions = []
         velocities = []
         accelerations = []
-        
+
         for t in t_values:
             b0 = (1-t)**3
             b1 = 3*(1-t)**2*t
             b2 = 3*(1-t)*t**2
             b3 = t**3
-            
+
             position = b0 * start_point + b1 * control_point_1 + b2 * control_point_2 + b3 * end_point
             positions.append(position)
-            
+
             v0 = 3*(1-t)**2
             v1 = 6*(1-t)*t
             v2 = 3*t**2
-            
+
             velocity_dir = v0 * (control_point_1 - start_point) + \
                           v1 * (control_point_2 - control_point_1) + \
                           v2 * (end_point - control_point_2)
-            
+
             speed = np.linalg.norm(velocity_dir)
             if speed > 1e-10:
                 velocity_dir = velocity_dir / speed
                 velocities.append(velocity_dir * self.velocity)
             else:
                 velocities.append(np.array([0.0, 0.0]))
-            
+
             a0 = 6*(1-t)
             a1 = 6*t
-            
+
             acceleration = a0 * (control_point_2 - 2*control_point_1 + start_point) + \
                           a1 * (end_point - 2*control_point_2 + control_point_1)
-            
+
             accel_magnitude = self.velocity**2 * np.linalg.norm(acceleration) / (speed**2) if speed > 1e-10 else 0
-            
+
             if accel_magnitude > self.max_acceleration:
                 accel_magnitude = self.max_acceleration
-            
+
             if speed > 1e-10:
                 normal_vector = np.array([-velocity_dir[1], velocity_dir[0]])
-                
+
                 if np.dot(normal_vector, acceleration) < 0:
                     normal_vector = -normal_vector
-                
+
                 accelerations.append(normal_vector * accel_magnitude)
             else:
                 accelerations.append(np.array([0.0, 0.0]))
-        
+
         for i in range(num_samples):
             self.trajectory.append(positions[i])
             self.timestamps.append(self.time + duration * t_values[i])
             self.velocities.append(velocities[i])
             self.accelerations.append(accelerations[i])
-        
+
         self.last_velocity_direction = velocities[-1] / self.velocity if velocities else end_direction
-        
+
         self.time += duration
-        
+
         return self.last_velocity_direction
 
 def get_quad_vertices_from_detecting_region_info(detecting_region_info):
     """从DetectingRegionInfo对象中提取四边形顶点坐标"""
     # 定义四边形顶点，使用Config中的位置
     quad_vertices = [
-        np.array([0, 0]),           # 发射器位置 transmittor_position
-        np.array([200, 0]),         # 接收器1位置 receiver_position_1
-        np.array([300, 150]),       # 接收器3位置 receiver_position_3
-        np.array([100, 100])        # 接收器2位置 receiver_position_2
+        np.array([0, 0]),       # 发射器位置 transmittor_position
+        np.array([200, 0]),     # 接收器1位置 receiver_position_1
+        np.array([300, 150]),   # 接收器3位置 receiver_position_3
+        np.array([100, 100])    # 接收器2位置 receiver_position_2
     ]
-    
+
     return quad_vertices
 
 def is_point_inside_quadrilateral(point, quad_vertices):
@@ -174,17 +174,17 @@ def is_point_inside_quadrilateral(point, quad_vertices):
     x, y = point
     n = len(quad_vertices)
     inside = False
-    
+
     p1x, p1y = quad_vertices[0]
     for i in range(n + 1):
         p2x, p2y = quad_vertices[i % n]
         if min(p1y, p2y) < y <= max(p1y, p2y) and x <= max(p1x, p2x):
             if p1y != p2y:
                 xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
-            if p1x == p2x or x <= xinters:
-                inside = not inside
+                if p1x == p2x or x <= xinters:
+                    inside = not inside
         p1x, p1y = p2x, p2y
-    
+
     return inside
 
 def is_bezier_curve_inside_quadrilateral(p0, p1, p2, p3, quad_vertices, num_checks=20):
@@ -195,15 +195,15 @@ def is_bezier_curve_inside_quadrilateral(p0, p1, p2, p3, quad_vertices, num_chec
         b1 = 3*(1-t)**2*t
         b2 = 3*(1-t)*t**2
         b3 = t**3
-        
+
         point = [
             b0 * p0[0] + b1 * p1[0] + b2 * p2[0] + b3 * p3[0],
             b0 * p0[1] + b1 * p1[1] + b2 * p2[1] + b3 * p3[1]
         ]
-        
+
         if not is_point_inside_quadrilateral(point, quad_vertices):
             return False
-    
+
     return True
 
 def generate_random_point_inside_quadrilateral(quad_vertices):
@@ -212,15 +212,15 @@ def generate_random_point_inside_quadrilateral(quad_vertices):
     max_x = max(v[0] for v in quad_vertices)
     min_y = min(v[1] for v in quad_vertices)
     max_y = max(v[1] for v in quad_vertices)
-    
+
     for _ in range(100):
         x = random.uniform(min_x, max_x)
         y = random.uniform(min_y, max_y)
         point = [x, y]
-        
+
         if is_point_inside_quadrilateral(point, quad_vertices):
             return point
-    
+
     centroid = np.mean(quad_vertices, axis=0)
     return centroid.tolist()
 
@@ -229,56 +229,56 @@ def generate_trajectory_with_ABCD_in_quadrilateral(quad_vertices, max_tries=100)
     for attempt in range(max_tries):
         velocity = random.uniform(15.0, 25.0)
         max_acceleration = random.uniform(20.0, 30.0)
-        
+
         generator = TrajectoryGenerator(velocity=velocity, max_acceleration=max_acceleration)
-        
+
         points = []
         for _ in range(4):
             points.append(generate_random_point_inside_quadrilateral(quad_vertices))
-        
+
         if not all(is_point_inside_quadrilateral(p, quad_vertices) for p in points):
             continue
-        
+
         ab_vector = np.array(points[1]) - np.array(points[0])
         cd_vector = np.array(points[3]) - np.array(points[2])
-        
+
         if np.linalg.norm(ab_vector) < 5.0 or np.linalg.norm(cd_vector) < 5.0:
             continue
-            
+
         ab_direction = ab_vector / np.linalg.norm(ab_vector)
         cd_direction = cd_vector / np.linalg.norm(cd_vector)
-        
+
         bc_vector = np.array(points[2]) - np.array(points[1])
         if np.linalg.norm(bc_vector) < 10.0:
             continue
-            
+
         bc_direction = bc_vector / np.linalg.norm(bc_vector)
-        
+
         control_distance_1 = np.linalg.norm(bc_vector) * 0.5
         control_point_1 = np.array(points[1]) + ab_direction * control_distance_1
-        
+
         control_distance_2 = np.linalg.norm(bc_vector) * 0.5
         control_point_2 = np.array(points[2]) - cd_direction * control_distance_2
-        
+
         if not is_point_inside_quadrilateral(control_point_1.tolist(), quad_vertices) or \
            not is_point_inside_quadrilateral(control_point_2.tolist(), quad_vertices) or \
-           not is_bezier_curve_inside_quadrilateral(points[1], control_point_1.tolist(), 
-                                                  control_point_2.tolist(), points[2], quad_vertices):
+           not is_bezier_curve_inside_quadrilateral(points[1], control_point_1.tolist(),
+                                                 control_point_2.tolist(), points[2], quad_vertices):
             continue
-        
+
         try:
             b_velocity_direction = generator.add_straight_line(points[0], points[1], 
-                                                              np.linalg.norm(ab_vector) / velocity)
+                                                             np.linalg.norm(ab_vector) / velocity)
             
             c_velocity_direction = generator.add_curved_transition(points[1], points[2], 
-                                                                 b_velocity_direction, cd_direction)
+                                                                b_velocity_direction, cd_direction)
             
             generator.add_straight_line(points[2], points[3], np.linalg.norm(cd_vector) / velocity)
             
             return generator
         except Exception as e:
             continue
-    
+
     return None
 
 def generate_multiple_trajectories(num_trajectories, detecting_region_info):
@@ -296,61 +296,64 @@ def generate_multiple_trajectories(num_trajectories, detecting_region_info):
     
     return trajectories
 
-def sample_trajectory_at_time(trajectory, timestamps, sample_time):
-    """在指定时间点采样轨迹"""
-    if sample_time < timestamps[0]:
-        return trajectory[0]
-    
-    if sample_time >= timestamps[-1]:
-        return trajectory[-1]
-    
-    for i in range(len(timestamps) - 1):
-        if timestamps[i] <= sample_time < timestamps[i + 1]:
-            t = (sample_time - timestamps[i]) / (timestamps[i + 1] - timestamps[i])
-            return trajectory[i] * (1 - t) + trajectory[i + 1] * t
-    
-    return trajectory[-1]
-
-def generate_lines_from_trajectory(trajectory_generator, t1, t2):
-    """从轨迹生成器生成两条采样线
-    数据格式: numpy[点的xy坐标 (2), 总点数 (n)]
-    """
-    
-    trajectory = np.array(trajectory_generator.trajectory)
-    timestamps = np.array(trajectory_generator.timestamps)
+def sample_trajectory_at_time_interval(trajectory, time_interval):
+    """按固定时间间隔采样轨迹点"""
+    trajectory_points = np.array(trajectory.trajectory)
+    timestamps = np.array(trajectory.timestamps)
     
     total_time = timestamps[-1]
     
-    lines_a = []
-    lines_b = []
+    # 计算采样时间点
+    sample_times = np.arange(0, total_time, time_interval)
+    if sample_times[-1] < total_time:
+        sample_times = np.append(sample_times, total_time)
     
-    # 生成line A: 采样时间点 0, (t1 + t2), 2*(t1 + t2), ...
-    sample_time = 0
-    while sample_time <= total_time:
-        point = sample_trajectory_at_time(trajectory, timestamps, sample_time)
-        lines_a.append(point)
-        sample_time += (t1 + t2)
+    sampled_points = []
     
-    # 生成line B: 采样时间点 t1, t1 + (t1 + t2), t1 + 2*(t1 + t2), ...
-    sample_time = t1
-    while sample_time <= total_time:
-        point = sample_trajectory_at_time(trajectory, timestamps, sample_time)
-        lines_b.append(point)
-        sample_time += (t1 + t2)
+    # 对每个采样时间点，找到对应的轨迹点
+    for t in sample_times:
+        # 找到时间最接近的轨迹点
+        idx = np.argmin(np.abs(timestamps - t))
+        sampled_points.append(trajectory_points[idx])
     
-    return np.array(lines_a), np.array(lines_b)
+    return np.array(sampled_points)
 
-def generateLines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5, seed=42):
+def generate_lines_from_trajectory(trajectory_generator, time_interval):
+    """从轨迹生成器按时间间隔t生成相邻点的line_a和line_b
+    
+    生成格式:
+    line_a: 第1到第n-1个点
+    line_b: 第2到第n个点
+    
+    返回:
+    两个numpy数组，对应相邻时间点的位置
+    """
+    # 按时间间隔采样轨迹
+    sampled_points = sample_trajectory_at_time_interval(trajectory_generator, time_interval)
+    
+    if len(sampled_points) < 2:
+        return np.array([]), np.array([])
+    
+    # line_a是第1到第n-1个点
+    line_a = sampled_points[:-1]
+    
+    # line_b是第2到第n个点
+    line_b = sampled_points[1:]
+    
+    return line_a, line_b
+
+def generateLines(detecting_region_info, num_lines=10, time_interval=0.5, seed=42):
     """生成指定数量的线对
     
     Args:
         detecting_region_info: 检测区域信息
         num_lines: 生成的轨迹条数
-        t1, t2: 采样间隔参数
-        
+        time_interval: 轨迹采样时间间隔，单位为秒
+        seed: 随机种子
+    
     Returns:
-        tuple: (lines_a, lines_b)，两个 list，每个 list 中包含多条轨迹, 每条轨迹点的数量不一定相同
-               其中n是轨迹条数，x是每条轨迹上的采样点数
+        tuple: (lines_a, lines_b)，两个list，每个list中包含多条轨迹
+        轨迹是相邻时间点的位置坐标
     """
     random.seed(seed)
     np.random.seed(seed)
@@ -359,30 +362,28 @@ def generateLines(detecting_region_info, num_lines=10, t1=0.5, t2=0.5, seed=42):
     trajectories = generate_multiple_trajectories(num_lines, detecting_region_info)
     
     # 初始化存储所有轨迹的列表
-    # lines 数据格式: list[轨迹1, 轨迹2, ...], 每条轨迹是一个numpy数组, n1, n2, n3... 不要求相同
-    # 轨迹数据格式: numpy[总点数 (n), 点的xy坐标 (2)]
     all_lines_a = []
     all_lines_b = []
     
     # 为每条轨迹生成对应的线对
     for trajectory in trajectories:
-        lines_a, lines_b = generate_lines_from_trajectory(trajectory, t1, t2)
-        all_lines_a.append(lines_a)
-        all_lines_b.append(lines_b)
+        line_a, line_b = generate_lines_from_trajectory(trajectory, time_interval)
+        if len(line_a) > 0:
+            all_lines_a.append(line_a)
+            all_lines_b.append(line_b)
     
     return all_lines_a, all_lines_b
-
 
 def part_line(step_count_per_line, long_line):
     """
     将一条长线分成多条短线段
     
     参数:
-    step_count_per_line (int): 每条短线段包含的点数
-    long_line (numpy.ndarray): 长线上所有点的坐标，形状为(n, 2)，其中n是点的数量
+        step_count_per_line (int): 每条短线段包含的点数
+        long_line (numpy.ndarray): 长线上所有点的坐标，形状为(n, 2)，其中n是点的数量
     
     返回:
-    list: 包含多条短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
+        list: 包含多条短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
     """
     if len(long_line) < step_count_per_line:
         # 如果长线上的点数少于所需的步数，则直接跳出
@@ -400,17 +401,16 @@ def part_line(step_count_per_line, long_line):
     
     return short_lines
 
-
 def partLines(step_count_per_line, long_lines):
     """
     将多条长线分别划分成短线段
     
     参数:
-    step_count_per_line (int): 每条短线段包含的点数
-    long_lines (list): 包含多条长线的列表，每条长线是一个形状为(n, 2)的numpy数组
+        step_count_per_line (int): 每条短线段包含的点数
+        long_lines (list): 包含多条长线的列表，每条长线是一个形状为(n, 2)的numpy数组
     
     返回:
-    list: 包含所有短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
+        list: 包含所有短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
     """
     all_short_lines = []
     
@@ -423,4 +423,3 @@ def partLines(step_count_per_line, long_lines):
         all_short_lines.extend(short_lines)
     
     return all_short_lines
-    
