@@ -297,7 +297,7 @@ def generate_multiple_trajectories(num_trajectories, detecting_region_info):
     return trajectories
 
 def sample_trajectory_at_time_interval(trajectory, time_interval):
-    """按固定时间间隔采样轨迹点"""
+    """按固定时间间隔采样轨迹点，使用线性插值保证点位置准确"""
     trajectory_points = np.array(trajectory.trajectory)
     timestamps = np.array(trajectory.timestamps)
     
@@ -310,11 +310,34 @@ def sample_trajectory_at_time_interval(trajectory, time_interval):
     
     sampled_points = []
     
-    # 对每个采样时间点，找到对应的轨迹点
+    # 对每个采样时间点，计算插值位置
     for t in sample_times:
-        # 找到时间最接近的轨迹点
-        idx = np.argmin(np.abs(timestamps - t))
-        sampled_points.append(trajectory_points[idx])
+        # 如果采样时间恰好是轨迹中的时间点
+        if t in timestamps:
+            idx = np.where(timestamps == t)[0][0]
+            sampled_points.append(trajectory_points[idx])
+            continue
+            
+        # 找到采样时间点所在的时间区间
+        next_idx = np.searchsorted(timestamps, t)
+        if next_idx == 0:
+            # 采样时间小于第一个时间点
+            sampled_points.append(trajectory_points[0])
+        elif next_idx == len(timestamps):
+            # 采样时间大于最后一个时间点
+            sampled_points.append(trajectory_points[-1])
+        else:
+            # 在两个时间点之间插值
+            prev_idx = next_idx - 1
+            prev_time = timestamps[prev_idx]
+            next_time = timestamps[next_idx]
+            prev_point = trajectory_points[prev_idx]
+            next_point = trajectory_points[next_idx]
+            
+            # 线性插值计算位置
+            alpha = (t - prev_time) / (next_time - prev_time)
+            interpolated_point = prev_point * (1 - alpha) + next_point * alpha
+            sampled_points.append(interpolated_point)
     
     return np.array(sampled_points)
 
