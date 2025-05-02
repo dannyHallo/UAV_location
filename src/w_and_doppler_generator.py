@@ -1,7 +1,7 @@
 import numpy as np
 import math
-import src.DetectingRegionInfo as DetectingRegionInfo
-import src.DopplerInfo as DopplerInfo
+import src.detecting_region_info as detecting_region_info
+import src.doppler_info as doppler_info
 
 
 def calculate_angles_phi(array_A, array_B, origin):
@@ -189,7 +189,7 @@ def extract_coords_from_lines(lines):
         coords.extend(line)
     return np.array(coords)
 
-def generateWAndDoppler(detecting_region_info, doppler_info, lines_a, lines_b, time_interval):
+def generateWAndDoppler(detecting_region_info: detecting_region_info, doppler_info, lines_a, lines_b, time_interval):
     """
     lines 输入格式: 见 NewLinesGenerator.py
     """

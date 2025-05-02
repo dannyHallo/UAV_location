@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
 
-def printLinesShape(lines):
+def print_lines_shape(lines):
     # Print the shape of the lines array
     print("Total lines: ", len(lines))
     for i in range(len(lines)):
