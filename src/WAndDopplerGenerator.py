@@ -35,6 +35,39 @@ def get_angle_phi(detecting_region_info, coords_A, coords_B):
     return [phi1, phi2, phi3, phi4]
 
 
+def calculate_instantaneous_speeds(array_A, array_B, time_interval):
+    """
+    计算每对对应位置点之间的瞬时速度大小
+    
+    参数:
+        array_A: 物体开始时刻的位置坐标数组，形状为 (n, 2)
+        array_B: time_interval时间后物体的位置坐标数组，形状为 (n, 2)
+        time_interval: 两个时刻之间的时间间隔
+        
+    返回:
+        瞬时速度大小的数组，长度为 n
+    """
+    # 确保输入是numpy数组
+    array_A = np.array(array_A)
+    array_B = np.array(array_B)
+    
+    # 确保两个数组形状一致
+    if array_A.shape != array_B.shape:
+        raise ValueError("array_A 和 array_B 的形状必须相同")
+    
+    # 计算位移向量
+    displacements = array_B - array_A
+    
+    # 计算每个位移向量的大小（欧几里得范数）
+    # 对于形状为 (n, 2) 的数组，axis=1 表示沿第二个维度计算范数
+    displacement_magnitudes = np.linalg.norm(displacements, axis=1)
+    
+    # 计算速度大小
+    speeds = displacement_magnitudes / time_interval
+    
+    return speeds
+
+
 def calculate_distance(x, y, a, b):
     """Calculate the Euclidean distance between two points (x, y) and (a, b)."""
     return math.sqrt((a - x) ** 2 + (b - y) ** 2)
@@ -156,20 +189,23 @@ def extract_coords_from_lines(lines):
         coords.extend(line)
     return np.array(coords)
 
-def generateWAndDoppler(detecting_region_info, doppler_info, lines_a, lines_b):
+def generateWAndDoppler(detecting_region_info, doppler_info, lines_a, lines_b, time_interval):
     """
     lines 输入格式: 见 NewLinesGenerator.py
     """
 
     coords_a = extract_coords_from_lines(lines_a)
     coords_b = extract_coords_from_lines(lines_b)
-    
+
     data_length = np.shape(coords_a)[0]
 
     [phi1, phi2, phi3, phi4] = get_angle_phi(
         detecting_region_info, coords_a, coords_b)
     [theta1, theta2, theta3, theta4] = get_angle_theta(
         detecting_region_info, coords_a, coords_b)
+
+    # 预先计算速度大小
+    speeds = calculate_instantaneous_speeds(coords_a, coords_b, doppler_info.time_interval)
 
     w = np.zeros([data_length, 3])
     doppler = np.zeros([data_length, 3])
@@ -223,17 +259,14 @@ def generateWAndDoppler(detecting_region_info, doppler_info, lines_a, lines_b):
             * (theta4[i] * np.cos(phi4[i]) + np.sin(phi4[i]))
         )
 
-        v12 = doppler_info.v * doppler_info.fc * \
+        # 使用第i个速度值
+        v12 = speeds[i] * doppler_info.fc * \
             (np.cos(phi1[i]) + np.cos(phi2[i])) / doppler_info.c
-        v13 = doppler_info.v * doppler_info.fc * \
+        v13 = speeds[i] * doppler_info.fc * \
             (np.cos(phi1[i]) + np.cos(phi3[i])) / doppler_info.c
-        v14 = doppler_info.v * doppler_info.fc * \
+        v14 = speeds[i] * doppler_info.fc * \
             (np.cos(phi1[i]) + np.cos(phi4[i])) / doppler_info.c
 
-        # w12 = 2*6*10e9*3.14*dd12/(3*10e8)
-        # w13 = 2*6*10e9*3.14*dd13/(3*10e8)
-        # v12 = (6*10e9/(3*10e8))*dd12*100
-        # v13 = (6*10e9/(3*10e8))*dd13*100
         w[i][0] = w12
         w[i][1] = w13
         w[i][2] = w14
