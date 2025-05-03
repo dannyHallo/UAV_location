@@ -12,8 +12,8 @@ def visualizeLines(detecting_region_info, lines, color='r'):
     # For visualization purposes, we will use matplotlib to plot the lines and the detecting region.
 
     _, ax = plt.subplots()
-    ax.set_xlim(0, 300)
-    ax.set_ylim(0, 150)
+    ax.set_xlim(-120, 120)
+    ax.set_ylim(-50, 150)
     ax.add_patch(Polygon([detecting_region_info.v1,
                  detecting_region_info.v2, detecting_region_info.v4, detecting_region_info.v3], fill=False))
 

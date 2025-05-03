@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 
+
 def get_d_phi(detecting_region_info, coord_a):
     ref = detecting_region_info.transmittor_position
     phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
@@ -41,19 +42,101 @@ def generateFeaturesAndLabels(
     doppler,
     step_count_per_line,
 ):
-    num_of_lines_to_generate=len(lines_a)
+    num_of_lines_to_generate = len(lines_a)
     features = np.concatenate((w, doppler), axis=1)
     labels = extract_coords_from_lines(lines_a)
     reshaped_features = features.reshape(
         num_of_lines_to_generate, step_count_per_line, 6
     )
-    reshaped_labels = labels.reshape(
-        num_of_lines_to_generate, step_count_per_line, 2)
+    reshaped_labels = labels.reshape(num_of_lines_to_generate, step_count_per_line, 2)
 
     # drop the sequence of the label
     reshaped_labels = reshaped_labels[:, -1, :]
 
     return [reshaped_features, reshaped_labels]
+
+
+# 合起来训，即一次训练出四个φ
+import numpy as np
+
+import numpy as np
+
+def generateFeaturesAndLabelsStage1(
+    phis1234,    # shape (N,4) 或可转成 (N,4) 的列表
+    w,           # shape (N, w_dim) 或 (N,) 或列表
+    doppler,     # shape (N, d_dim) 或 (N,) 或列表
+    detecting_region_info
+):
+    """
+    返回：
+      features: np.ndarray, shape (N, 6 + w_dim + d_dim)
+      labels:   np.ndarray, shape (N, 4) == phis1234
+    """
+    # 1) 转成 numpy 数组
+    phis1234 = np.asarray(phis1234, dtype=float)
+    w        = np.asarray(w,        dtype=float)
+    doppler  = np.asarray(doppler,  dtype=float)
+
+    # 2) 确保维度正确：phis1234 必须是 (N,4)
+    if phis1234.ndim != 2 or phis1234.shape[1] != 4:
+        raise ValueError(f"phis1234 应该是 (N,4)，但得到 {phis1234.shape}")
+    N = phis1234.shape[0]
+
+    # 3) 把 w, doppler 都整理成 (N, *) 形状
+    def normalize_matrix(x, name):
+        # 至少 2 维
+        if x.ndim == 1:
+            # (N,) -> (N,1)
+            x = x.reshape(N, 1)
+        elif x.ndim == 2:
+            if x.shape[0] != N:
+                raise ValueError(f"{name} 的第一维应该是 {N}, 但得到 {x.shape[0]}")
+        else:
+            raise ValueError(f"{name} 不支持 ndim={x.ndim}")
+        return x
+
+    w       = normalize_matrix(w,      "w")
+    doppler = normalize_matrix(doppler,"doppler")
+
+    # 4) 取出三对 (ro, beta)，可能是标量或长度 N 的数组
+    ro1, beta1 = detecting_region_info.get_ro_beta_r1_t()
+    ro2, beta2 = detecting_region_info.get_ro_beta_r1_r2()
+    ro3, beta3 = detecting_region_info.get_ro_beta_r1_r3()
+
+    # 5) 工具：把标量或 (N,) 变成 (N,1)
+    def to_col(x):
+        arr = np.atleast_1d(x).astype(float)
+        if arr.ndim == 0:
+            arr = np.full((N,), arr.item(), dtype=float)
+        if arr.ndim == 1:
+            if arr.shape[0] != N:
+                raise ValueError(f"长度不匹配：需要 {N}，但得到 {arr.shape[0]}")
+            arr = arr.reshape(N, 1)
+        return arr
+
+    c_ro1   = to_col(ro1)
+    c_beta1 = to_col(beta1)
+    c_ro2   = to_col(ro2)
+    c_beta2 = to_col(beta2)
+    c_ro3   = to_col(ro3)
+    c_beta3 = to_col(beta3)
+
+    # 6) 横向拼接所有特征
+    features = np.concatenate([
+        c_ro1,   # (N,1)
+        c_beta1, # (N,1)
+        c_ro2,   # (N,1)
+        c_beta2, # (N,1)
+        c_ro3,   # (N,1)
+        c_beta3, # (N,1)
+        w,       # (N, w_dim)
+        doppler  # (N, d_dim)
+    ], axis=1)
+
+    # 7) labels 直接用 phis1234
+    labels = phis1234.copy()  # (N,4)
+
+    return features, labels
 
 
 # 定义计算距离的函数
@@ -78,8 +161,7 @@ def calculate_distances(train_label, detecting_region_info):
     )
 
     # 将结果组合成 (n, 3) 形状的数组
-    distances = np.stack(
-        (distances_to_r1, distances_to_r2, distances_to_r3), axis=1)
+    distances = np.stack((distances_to_r1, distances_to_r2, distances_to_r3), axis=1)
 
     return distances
 
@@ -92,6 +174,7 @@ def calculate_distances(train_label, detecting_region_info):
 # 初始猜测采用接收器1的位置，可以根据需要调整。
 # 如果优化成功，则使用优化结果作为估计位置；否则，使用接收器1的位置作为默认值。
 # 输出：预测的位置数组，形状为 (n, 2)。
+
 
 def estimate_positions_optimized(distance_table, detecting_region_info):
     """
@@ -117,7 +200,10 @@ def estimate_positions_optimized(distance_table, detecting_region_info):
         # 定义残差函数
         def residuals(vars):
             x, y = vars
-            return np.sqrt((x - receivers[:, 0])**2 + (y - receivers[:, 1])**2) - distances
+            return (
+                np.sqrt((x - receivers[:, 0]) ** 2 + (y - receivers[:, 1]) ** 2)
+                - distances
+            )
 
         # 初始猜测：使用接收器1的位置
         initial_guess = r1

@@ -1,5 +1,8 @@
 import numpy as np
 import random
+from src.detecting_region_info_generator import generate_detecting_region_infos
+from typing import List
+from src.detecting_region_info import DetectingRegionInfo
 
 
 class TrajectoryGenerator:
@@ -213,18 +216,32 @@ def part_lines(step_count_per_line, long_lines):
     
     return all_short_lines
 
+detecting_region_infos = generate_detecting_region_infos(500)
 
-def _get_quad_vertices_from_detecting_region_info(detecting_region_info):
-    """从DetectingRegionInfo对象中提取四边形顶点坐标"""
-    # 定义四边形顶点，使用Config中的位置
-    quad_vertices = [
-        np.array([0, 0]),       # 发射器位置 transmittor_position
-        np.array([200, 0]),     # 接收器1位置 receiver_position_1
-        np.array([300, 150]),   # 接收器3位置 receiver_position_3
-        np.array([100, 100])    # 接收器2位置 receiver_position_2
+def _get_quad_vertices_from_detecting_region_info(
+    info: DetectingRegionInfo
+) -> List[np.ndarray]:
+    """从一个 DetectingRegionInfo 对象中提取四边形的 4 个顶点坐标（v1,v2,v3,v4）"""
+    # 如果你需要按画图时的顺序（v1,v2,v4,v3），可把下面 v3、v4 对换：
+    return [
+        info.transmittor_position,   # v1
+        info.receiver_position_1,    # v2
+        info.receiver_position_2,    # v3
+        info.receiver_position_3,    # v4
     ]
 
-    return quad_vertices
+# ————————————————————————————————————————————————
+# 假设这是你生成所有 DetectingRegionInfo 的函数
+# from some_module import generate_detecting_region_infos
+# detecting_region_infos: List[DetectingRegionInfo] = generate_detecting_region_infos(500)
+
+# 批量提取每个四边形的顶点列表
+quad_vertices_list: List[List[np.ndarray]] = [
+    _get_quad_vertices_from_detecting_region_info(info)
+    for info in detecting_region_infos
+]
+
+
 
 def _is_point_inside_quadrilateral(point, quad_vertices):
     """检查点是否在四边形内"""

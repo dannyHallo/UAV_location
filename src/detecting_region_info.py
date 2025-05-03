@@ -31,6 +31,34 @@ class DetectingRegionInfo:
         y_min = min(self.v1[1], self.v2[1], self.v3[1], self.v4[1])
         y_max = max(self.v1[1], self.v2[1], self.v3[1], self.v4[1])
         return (x_min, y_min), (x_max, y_max)
+    
+    # 得到（T,RX1）的极坐标
+    def get_ro_beta_r1_t(self) -> tuple[float, float]:
+        """
+        以 RX1 (v2) 为原点，计算 T (v1) 的极坐标：
+          ρ  = |T - RX1|
+          β1 = arg(T - RX1)  （弧度，范围 (-π,π]）
+        返回 (rho, beta1)
+        """
+        delta = self.v1 - self.v2             # 向量从 RX1 指向 T
+        rho1   = np.hypot(delta[0], delta[1])  # 或 np.linalg.norm(delta)
+        beta1 = np.arctan2(delta[1], delta[0])
+        return rho1, beta1
+    
+    def get_ro_beta_r1_r2(self) -> tuple[float, float]:
+
+        delta = self.v3 - self.v2             
+        rho2   = np.hypot(delta[0], delta[1])  
+        beta2 = np.arctan2(delta[1], delta[0])
+        return rho2, beta2
+    
+    def get_ro_beta_r1_r3(self) -> tuple[float, float]:
+
+        delta = self.v4 - self.v2             
+        rho3   = np.hypot(delta[0], delta[1])  
+        beta3 = np.arctan2(delta[1], delta[0])
+        return rho3, beta3
+
 
     def draw_figure(self, color='r'):
         _, ax = plt.subplots()
