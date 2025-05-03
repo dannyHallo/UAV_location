@@ -59,12 +59,10 @@ def generateFeaturesAndLabels(
 # 合起来训，即一次训练出四个φ
 import numpy as np
 
-import numpy as np
-
 def generateFeaturesAndLabelsStage1(
-    phis1234,    # shape (N,4) 或可转成 (N,4) 的列表
-    w,           # shape (N, w_dim) 或 (N,) 或列表
-    doppler,     # shape (N, d_dim) 或 (N,) 或列表
+    phis1234,    # (N,4) 或可转成 (N,4) 的 list
+    w,           # (N,), (N,w_dim), (w_dim,N) 或 list
+    doppler,     # (N,), (N,d_dim), (d_dim,N) 或 list
     detecting_region_info
 ):
     """
@@ -72,56 +70,65 @@ def generateFeaturesAndLabelsStage1(
       features: np.ndarray, shape (N, 6 + w_dim + d_dim)
       labels:   np.ndarray, shape (N, 4) == phis1234
     """
-    # 1) 转成 numpy 数组
+    # ———— 1) phis1234 -> ndarray 并检查
     phis1234 = np.asarray(phis1234, dtype=float)
-    w        = np.asarray(w,        dtype=float)
-    doppler  = np.asarray(doppler,  dtype=float)
-
-    # 2) 确保维度正确：phis1234 必须是 (N,4)
     if phis1234.ndim != 2 or phis1234.shape[1] != 4:
         raise ValueError(f"phis1234 应该是 (N,4)，但得到 {phis1234.shape}")
     N = phis1234.shape[0]
 
-    # 3) 把 w, doppler 都整理成 (N, *) 形状
-    def normalize_matrix(x, name):
-        # 至少 2 维
-        if x.ndim == 1:
-            # (N,) -> (N,1)
-            x = x.reshape(N, 1)
-        elif x.ndim == 2:
-            if x.shape[0] != N:
-                raise ValueError(f"{name} 的第一维应该是 {N}, 但得到 {x.shape[0]}")
-        else:
-            raise ValueError(f"{name} 不支持 ndim={x.ndim}")
-        return x
+    # ———— 2) 将 w, doppler 规范成 (N, *)
+    def prep_matrix(x, name):
+        arr = np.asarray(x, dtype=float)
+        # 一维： (N,) -> (N,1)
+        if arr.ndim == 1:
+            if arr.shape[0] != N:
+                raise ValueError(f"{name}.shape={arr.shape}，第一维应为 {N}")
+            return arr.reshape(N, 1)
+        # 二维：若 (N, k) 保持；若 (k, N) 转置
+        if arr.ndim == 2:
+            if arr.shape[0] == N:
+                return arr
+            if arr.shape[1] == N:
+                return arr.T
+            raise ValueError(f"{name}.shape={arr.shape}，既不是 (N,*) 也不是 (*,N)")
+        raise ValueError(f"{name} 不支持 ndim={arr.ndim}")
 
-    w       = normalize_matrix(w,      "w")
-    doppler = normalize_matrix(doppler,"doppler")
+    w       = prep_matrix(w,      "w")
+    doppler = prep_matrix(doppler,"doppler")
 
-    # 4) 取出三对 (ro, beta)，可能是标量或长度 N 的数组
+    # ———— 3) 取三对 (ro, β)
     ro1, beta1 = detecting_region_info.get_ro_beta_r1_t()
     ro2, beta2 = detecting_region_info.get_ro_beta_r1_r2()
     ro3, beta3 = detecting_region_info.get_ro_beta_r1_r3()
 
-    # 5) 工具：把标量或 (N,) 变成 (N,1)
-    def to_col(x):
-        arr = np.atleast_1d(x).astype(float)
-        if arr.ndim == 0:
-            arr = np.full((N,), arr.item(), dtype=float)
-        if arr.ndim == 1:
-            if arr.shape[0] != N:
-                raise ValueError(f"长度不匹配：需要 {N}，但得到 {arr.shape[0]}")
-            arr = arr.reshape(N, 1)
-        return arr
+    # ———— 4) 将上述标量/数组广播或重塑到 (N,1)
+    def to_col(x, name):
+        arr = np.asarray(x, dtype=float)
+        # 如果是纯标量
+        if arr.size == 1:
+            return np.full((N, 1), arr.item(), dtype=float)
+        # 如果是一维，且正好长度 N
+        if arr.ndim == 1 and arr.shape[0] == N:
+            return arr.reshape(N, 1)
+        # 如果是 (1, N)
+        if arr.ndim == 2 and arr.shape == (1, N):
+            return arr.reshape(N, 1)
+        # 如果是 (N, 1)
+        if arr.ndim == 2 and arr.shape == (N, 1):
+            return arr
+        raise ValueError(
+            f"{name} 的形状 {arr.shape} 无法广播到 (N,1) "
+            f"(N={N})"
+        )
 
-    c_ro1   = to_col(ro1)
-    c_beta1 = to_col(beta1)
-    c_ro2   = to_col(ro2)
-    c_beta2 = to_col(beta2)
-    c_ro3   = to_col(ro3)
-    c_beta3 = to_col(beta3)
+    c_ro1   = to_col(ro1,   "ro1")
+    c_beta1 = to_col(beta1, "beta1")
+    c_ro2   = to_col(ro2,   "ro2")
+    c_beta2 = to_col(beta2, "beta2")
+    c_ro3   = to_col(ro3,   "ro3")
+    c_beta3 = to_col(beta3, "beta3")
 
-    # 6) 横向拼接所有特征
+    # ———— 5) 横向拼接
     features = np.concatenate([
         c_ro1,   # (N,1)
         c_beta1, # (N,1)
@@ -133,7 +140,7 @@ def generateFeaturesAndLabelsStage1(
         doppler  # (N, d_dim)
     ], axis=1)
 
-    # 7) labels 直接用 phis1234
+    # ———— 6) labels 就是 phis1234
     labels = phis1234.copy()  # (N,4)
 
     return features, labels
