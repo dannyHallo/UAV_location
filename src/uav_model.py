@@ -4,20 +4,21 @@ import torch.nn as nn
 import torch.nn.functional as f
 from src.kan import KAN
 
-# class KANModel(nn.Module):
-#     def __init__(self):
-#         super(KANModel, self).__init__()
-#         # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
-#         self.model = KAN(width=[6, 5, 2], grid=3, k=3,seed=42)
 
-#     def forward(self, x):
-#         return self.model(x)
+class KANModel(nn.Module):
+    def __init__(self):
+        super(KANModel, self).__init__()
+        # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
+        self.model = KAN(width=[12, 10, 8, 6, 4], grid=300, k=3, seed=42)
+
+    def forward(self, x):
+        return self.model(x)
 
 
 class DnnModule1(nn.Module):
     def __init__(self):
         super(DnnModule1, self).__init__()
-        self.fc1 = nn.Linear(6, 128)
+        self.fc1 = nn.Linear(12, 128)
         self.bn1 = nn.BatchNorm1d(128)
         self.fc2 = nn.Linear(128, 256)
         self.bn2 = nn.BatchNorm1d(256)
@@ -35,7 +36,7 @@ class DnnModule1(nn.Module):
         self.bn8 = nn.BatchNorm1d(64)
         self.fc9 = nn.Linear(64, 32)
         self.bn9 = nn.BatchNorm1d(32)
-        self.fc10 = nn.Linear(32, 2) # MARK
+        self.fc10 = nn.Linear(32, 4)  # MARK
         # Activation function can be assigned as a member variable
         self.activation = nn.ReLU()
 
@@ -56,8 +57,9 @@ class DnnModule1(nn.Module):
 class LSTMModule(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim, num_layers, dropout_rate):
         super(LSTMModule, self).__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers,
-                            batch_first=True, dropout=dropout_rate)
+        self.lstm = nn.LSTM(
+            input_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout_rate
+        )
         self.final_fc = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
@@ -72,11 +74,16 @@ class LSTMModule(nn.Module):
 
         return final_output
 
+
 class TransformerModule(nn.Module):
     def __init__(self, input_dim, output_dim, d_model, nhead, num_layers, dropout_rate):
         super(TransformerModule, self).__init__()
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout_rate)
-        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)
+        self.encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dropout=dropout_rate
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            self.encoder_layer, num_layers=num_layers
+        )
         self.input_fc = nn.Linear(input_dim, d_model)
         self.output_fc = nn.Linear(d_model, output_dim)
 
@@ -90,42 +97,42 @@ class TransformerModule(nn.Module):
         x = x[-1, :, :]  # shape: [batch_size, output_dim]
         return x
 
+
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        # self.kan = KANModel()
+        self.kan = KANModel()
         # self.dnn1 = DnnModule1()
         # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
-        self.lstm = LSTMModule(input_dim=6, output_dim=2, # MARK
-                               hidden_dim=128, num_layers=2, dropout_rate=0.2)
-        
+        # self.lstm = LSTMModule(input_dim=6, output_dim=2, # MARK
+        #                        hidden_dim=128, num_layers=2, dropout_rate=0.2)
+
         # self.dnn2 = DnnModule2(dropout_rate=0.35)
 
     def forward(self, x):
-        batch_size, seq_len, features_len = x.size()
+        batch_size, features_len = x.size()
 
         # reshape input to discard x temporarily for the first module
-        x = x.view(-1, features_len)
+        # x = x.view(-1, features_len)
 
-        # x = self.kan(x)
+        x = self.kan(x)
         # x = self.dnn1(x)
 
         # x = x.view(seq_len,batch_size,2)
         # x = self.transformer(x)
         # print(x.shape)
-        
+
         # reshape x to original shape (restoring seq)
-        x = x.view(batch_size, seq_len, 6) # MARK
-        x = self.lstm(x)
+        # x = x.view(batch_size, seq_len, 6) # MARK
+        # x = self.lstm(x)
 
         # lstm already returns the last hidden state of the sequences, no need to reshape
 
         # print(x.shape)
-        
+
         # print(x.shape)
         # x = x.permute(1, 0, 2)
-        
 
         # x = self.dnn2(x)
-        
+
         return x

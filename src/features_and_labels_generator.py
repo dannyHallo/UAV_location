@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from scipy.optimize import least_squares
 
 
@@ -140,9 +141,11 @@ def generateFeaturesAndLabelsStage1(
         doppler  # (N, d_dim)
     ], axis=1)
 
-    # ———— 6) labels 就是 phis1234
+    # ———— 6) 得到 phis1234
     labels = phis1234.copy()  # (N,4)
 
+    # ———— 7) labels 就是 cos(phis1234)
+    labels = np.cos(labels)
     return features, labels
 
 

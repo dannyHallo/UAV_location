@@ -1,18 +1,15 @@
 import numpy as np
 
-transmittor_position = np.array([0, 0])
-receiver_position_1 = np.array([200, 0])
-receiver_position_2 = np.array([100, 100])
-receiver_position_3 = np.array([300, 150])
 
-time_interval=0.01
-train_num_of_lines_to_generate = 3
-test_num_of_lines_to_generate = 1
-step_count_per_line = 5
-length_per_step = 0.2
+time_interval=0.02
+train_num_of_lines_to_generate_per_region = 7000
+test_num_of_lines_to_generate_per_region = 300
+# step_count_per_line = 5
+# length_per_step = 0.2
+train_detecting_region_nums = 100
+test_detecting_region_nums = 3
 
-
-epoch = 1000
+epoch = 500
 train_batch_size = 128
 # test_batch_size = test_set_num
 
@@ -28,5 +25,5 @@ using_model = "dnn"
 # using_model = "Transformer"
 
 # FIXME:
-# optimizer = "LBFGS"
-optimizer = "Adam"
+optimizer = "LBFGS"
+# optimizer = "Adam"
