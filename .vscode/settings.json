@@ -1,0 +1,6 @@
+{
+  "command-runner.commands": {
+    "conda activate": "conda activate UAV_location",
+    "generate stage 1 dataset": "python stage_1_dataset_gen.py"
+  }
+}

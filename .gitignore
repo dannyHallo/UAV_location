@@ -5,7 +5,7 @@ cache/
 
 **/.DS_Store
 
-.vscode/
+# .vscode/
 
 # the followings are from template
 
