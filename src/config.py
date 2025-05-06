@@ -1,3 +1,6 @@
+stage_1_train_set_path = "cache/stage_1_train.npz"
+stage_1_test_set_path ="cache/stage_1_test.npz"
+
 time_interval=0.025
 train_num_of_lines_to_generate_per_region = 50
 test_num_of_lines_to_generate_per_region = 5
@@ -17,6 +20,4 @@ fc = 6e9
 c = 3e8
 v = 30
 
-# FIXME:
-optimizer = "LBFGS"
-# optimizer = "Adam"
+optimizer = "Adam" # ["LBFGS" / "Adam"]

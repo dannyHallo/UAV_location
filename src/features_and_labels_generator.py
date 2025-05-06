@@ -3,8 +3,7 @@ import math
 from scipy.optimize import least_squares
 
 
-
-def get_d_phi(detecting_region_info, coord_a):
+def _get_d_phi(detecting_region_info, coord_a):
     ref = detecting_region_info.transmittor_position
     phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
     # change range from -pi to pi to 0 to 2pi
@@ -14,15 +13,15 @@ def get_d_phi(detecting_region_info, coord_a):
     return [d, phi]
 
 
-def get_labels(detecting_region_info, lines_a):
+def _get_labels(detecting_region_info, lines_a):
     labels = []
     for line in lines_a:
         for coord_a in line:
-            labels.append(get_d_phi(detecting_region_info, coord_a))
+            labels.append(_get_d_phi(detecting_region_info, coord_a))
     return np.array(labels)
 
 
-def extract_coords_from_lines(lines):
+def _extract_coords_from_lines(lines):
     """
     Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
     Each coordinate is a 2D point.
@@ -37,7 +36,7 @@ def extract_coords_from_lines(lines):
     return np.array(coords)
 
 
-def generateFeaturesAndLabels(
+def generate_features_and_labels(
     lines_a,
     w,
     doppler,
@@ -45,7 +44,7 @@ def generateFeaturesAndLabels(
 ):
     num_of_lines_to_generate = len(lines_a)
     features = np.concatenate((w, doppler), axis=1)
-    labels = extract_coords_from_lines(lines_a)
+    labels = _extract_coords_from_lines(lines_a)
     reshaped_features = features.reshape(
         num_of_lines_to_generate, step_count_per_line, 6
     )
@@ -60,7 +59,7 @@ def generateFeaturesAndLabels(
 # 合起来训，即一次训练出四个φ
 import numpy as np
 
-def generateFeaturesAndLabelsStage1(
+def generate_features_and_labels_stage_1(
     phis1234,    # (N,4) 或可转成 (N,4) 的 list
     w,           # (N,), (N,w_dim), (w_dim,N) 或 list
     doppler,     # (N,), (N,d_dim), (d_dim,N) 或 list

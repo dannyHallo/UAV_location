@@ -1,6 +1,7 @@
 model/
 figures/
 results/
+cache/
 
 **/.DS_Store
 

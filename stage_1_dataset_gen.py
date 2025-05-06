@@ -1,22 +1,35 @@
-# 并行化前需要的 imports
+#!/usr/bin/env python3
+# stage_1_dataset_gen.py
+
+import os
 import multiprocessing
 import time
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
+
 import src.trajectory_generator as trajectory_generator
 from src.w_and_doppler_generator import extract_coords_from_lines
 import src.get_phi_info as get_phi_info
 import src.w_and_doppler_generator as w_and_doppler_generator
 import src.features_and_labels_generator as features_and_labels_generator
-from src.detecting_region_info_generator import generate_detecting_region_infos  # 假设这个函数在这里
-import src.Config as config
-import src.doppler_info as doppler_info
+from src.detecting_region_info_generator import generate_detecting_region_infos
+import src.config as config
+import src.doppler_info as doppler_info_module
 
-# 1) 将对单个 detecting_region_info 的处理抽出来
+
+# -------------------------------------------------------------------
+# 1) 对单个 detecting_region_info 的处理函数
+# -------------------------------------------------------------------
 def _process_one_region(args):
-    idx, detecting_region_info, lines_to_generate_per_region, doppler_info, base_seed = args
+    (
+        idx,
+        detecting_region_info,
+        lines_to_generate_per_region,
+        doppler_info,
+        base_seed,
+    ) = args
 
-    # 可选：为每个 region 使用不同 seed，避免所有子进程随机数相同
+    # 每个 region 用不同 seed
     seed = base_seed + idx
 
     # 生成两条轨迹
@@ -24,7 +37,7 @@ def _process_one_region(args):
         detecting_region_info=detecting_region_info,
         time_interval=config.time_interval,
         num_lines=lines_to_generate_per_region,
-        seed=seed
+        seed=seed,
     )
 
     # 提取坐标
@@ -49,66 +62,146 @@ def _process_one_region(args):
     )
 
     # 生成特征和标签
-    feature_stage1, phis_label_stage1 = features_and_labels_generator.generateFeaturesAndLabelsStage1(
-        phis1234=phis_1234,
-        w=w,
-        doppler=doppler,
-        detecting_region_info=detecting_region_info
+    feature_stage_1, phis_label_stage_1 = (
+        features_and_labels_generator.generate_features_and_labels_stage_1(
+            phis1234=phis_1234,
+            w=w,
+            doppler=doppler,
+            detecting_region_info=detecting_region_info,
+        )
     )
 
-    return feature_stage1, phis_label_stage1
+    return feature_stage_1, phis_label_stage_1
 
 
+# -------------------------------------------------------------------
 # 2) 并行版的主函数
-def get_features_and_labels(detecting_region_nums,
-                            lines_to_generate_per_region,
-                            doppler_info,
-                            seed,
-                            num_workers=4):
-    # 生成所有检测区的信息
-    detecting_region_infos = generate_detecting_region_infos(detecting_region_nums)
+# -------------------------------------------------------------------
+def get_features_and_labels(
+    detecting_region_nums,
+    lines_to_generate_per_region,
+    doppler_info,
+    seed,
+    num_workers=None,
+):
+    """
+    并行生成 stage_1 的 features 和 labels。
+    num_workers=None 时自动取 cpu_count()-1。
+    """
+    if num_workers is None:
+        cpu_cnt = multiprocessing.cpu_count() or 1
+        num_workers = max(1, cpu_cnt - 1)
 
-    # 为每个 region 构造一个任务元组 (idx, region_info, lines_per_region, seed)
+    detecting_region_infos = generate_detecting_region_infos(detecting_region_nums)
     tasks = [
         (idx, info, lines_to_generate_per_region, doppler_info, seed)
         for idx, info in enumerate(detecting_region_infos)
     ]
 
-    # 启动进程池并行执行
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(executor.map(_process_one_region, tasks))
 
-    # 将所有子任务的输出拆分并合并
     features_list, labels_list = zip(*results)
-    features_stage1 = np.concatenate(features_list, axis=0)
-    phis_labels_stage1 = np.concatenate(labels_list, axis=0)
+    features_stage_1 = np.concatenate(features_list, axis=0)
+    phis_labels_stage_1 = np.concatenate(labels_list, axis=0)
+    return features_stage_1, phis_labels_stage_1
 
-    return features_stage1, phis_labels_stage1
 
-if __name__ == "__main__":
-    print("开始生成 stage1 数据...")
+# -------------------------------------------------------------------
+# 3) 存取函数
+# -------------------------------------------------------------------
+def save_features_labels(path, features, labels):
+    """
+    将 features 和 labels 保存为压缩 npz 文件
+    """
+    np.savez_compressed(path, features=features, labels=labels)
+    print(f"→ 已保存数据到：'{path}'")
 
-    doppler_info = doppler_info.DopplerInfo(config.c, config.fc, config.time_interval)
-    
-    start_time = time.time()
 
+def load_features_labels(path):
+    """
+    从 npz 文件加载 features 和 labels
+    """
+    data = np.load(path)
+    return data["features"], data["labels"]
+
+
+def load_or_generate_features_labels(
+    data_file,
+    detecting_region_nums,
+    lines_to_generate_per_region,
+    seed=42,
+    num_workers=None,
+):
+    """
+    如果 data_file 存在就加载，否则运行生成流程并保存
+    """
+    if os.path.exists(data_file):
+        print(f"→ 找到缓存文件，开始加载：'{data_file}'")
+        features, labels = load_features_labels(data_file)
+    else:
+        print(f"→ 缓存文件不存在，开始生成：'{data_file}'")
+        dop_info = doppler_info_module.DopplerInfo(
+            config.c, config.fc, config.time_interval
+        )
+        features, labels = get_features_and_labels(
+            detecting_region_nums=detecting_region_nums,
+            lines_to_generate_per_region=lines_to_generate_per_region,
+            doppler_info=dop_info,
+            seed=seed,
+            num_workers=num_workers,
+        )
+        save_features_labels(data_file, features, labels)
+    return features, labels
+
+
+def get_best_worker_count():
+    """
+    自动选择最佳进程数：cpu_count() - 1
+    """
     cpu_cnt = multiprocessing.cpu_count() or 1
-    # CPU 密集型：留 1 核给系统；IO 密集型可以直接用 cpu_cnt * 2
-    num_workers = max(1, cpu_cnt - 1)
-    print(f"检测到 {cpu_cnt} 个 CPU 核心")
-    print(f"使用 {num_workers} 个进程进行数据生成")
-    
-    # in benchmark, it can speed up to 7x
+    return max(1, cpu_cnt - 1), cpu_cnt
 
-    features, labels = get_features_and_labels(
-        detecting_region_nums=config.train_detecting_region_nums,
-        lines_to_generate_per_region=config.train_num_of_lines_to_generate_per_region,
-        doppler_info=doppler_info,
-        seed=42,
-        num_workers=num_workers
-    )
-    
-    print("features shape:", features.shape)
-    print("labels shape:", labels.shape)
-    
-    print("数据生成完成，耗时：", time.time() - start_time, "秒")
+
+# -------------------------------------------------------------------
+# 4) 脚本主入口
+# -------------------------------------------------------------------
+if __name__ == "__main__":
+    os.makedirs("cache", exist_ok=True)
+
+    presets = [
+        (
+            "训练集",
+            config.stage_1_train_set_path,
+            config.train_detecting_region_nums,
+            config.train_num_of_lines_to_generate_per_region,
+        ),
+        (
+            "测试集",
+            config.stage_1_test_set_path,
+            config.test_detecting_region_nums,
+            config.test_num_of_lines_to_generate_per_region,
+        ),
+    ]
+
+    print("========== stage_1 数据集 生成/加载 ==========")
+    for name, path, region_nums, lines_per_region in presets:
+        print(f"\n--- 处理{name} ---")
+        print(f"检查缓存路径：{path}")
+
+        start = time.time()
+        num_workers, cpu_cnt = get_best_worker_count()
+        print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
+
+        features, labels = load_or_generate_features_labels(
+            data_file=path,
+            detecting_region_nums=region_nums,
+            lines_to_generate_per_region=lines_per_region,
+            seed=42,
+            num_workers=num_workers,
+        )
+
+        print(
+            f"{name} 生成/加载完毕，features.shape={features.shape}, labels.shape={labels.shape}"
+        )
+        print(f"耗时：{time.time() - start:.2f} 秒")
