@@ -85,10 +85,6 @@ def get_features_and_labels(detecting_region_nums,
 
     return features_stage1, phis_labels_stage1
 
-# 1 cpu core -> 25.86207413673401 sec
-# 8 cpu cores -> 7.781280040740967 sec
-# autodecide (15) cpu cores -> 7.132663249969482 sec
-
 if __name__ == "__main__":
     print("开始生成 stage1 数据...")
 
@@ -101,6 +97,8 @@ if __name__ == "__main__":
     num_workers = max(1, cpu_cnt - 1)
     print(f"检测到 {cpu_cnt} 个 CPU 核心")
     print(f"使用 {num_workers} 个进程进行数据生成")
+    
+    # in benchmark, it can speed up to 7x
 
     features, labels = get_features_and_labels(
         detecting_region_nums=config.train_detecting_region_nums,
