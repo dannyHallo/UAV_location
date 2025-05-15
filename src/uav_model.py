@@ -101,7 +101,7 @@ class TransformerModule(nn.Module):
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        self.kan = KANModel()
+        # self.kan = KANModel()
         self.dnn1 = DnnModule1()
         # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
         # self.lstm = LSTMModule(input_dim=6, output_dim=2,
