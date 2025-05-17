@@ -13,6 +13,7 @@ import src.get_phi_info as get_phi_info
 import src.w_and_doppler_generator as w_and_doppler_generator
 import src.features_and_labels_generator as features_and_labels_generator
 from src.detecting_region_info_generator import generate_detecting_region_infos
+from src.extra_info_generator import get_extra_infos
 import src.config as config
 import src.doppler_info as doppler_info_module
 
@@ -60,18 +61,26 @@ def _process_one_region(args):
         coords_b=coords_b,
         phis_1234=phis_1234,
     )
-
-    # 生成特征和标签
-    feature_stage_1, phis_label_stage_1 = (
-        features_and_labels_generator.generate_features_and_labels_stage_1(
-            phis1234=phis_1234,
-            w=w,
-            doppler=doppler,
-            detecting_region_info=detecting_region_info,
-        )
+    labels = features_and_labels_generator.get_labels(
+        detecting_region_info=detecting_region_info, coords_a=coords_a
     )
 
-    return feature_stage_1, phis_label_stage_1
+    # 生成特征和标签
+    features = features_and_labels_generator.get_features(
+        phis1234=phis_1234,
+        w=w,
+        doppler=doppler,
+        detecting_region_info=detecting_region_info,
+    )
+
+    extra_infos = get_extra_infos(
+        detecting_region_info=detecting_region_info, coords_a=coords_a
+    )
+    print("features", features)
+    print("labels", labels)
+    print("extra_infos", extra_infos)
+
+    return features, labels, extra_infos
 
 
 # -------------------------------------------------------------------
@@ -101,20 +110,22 @@ def get_features_and_labels(
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(executor.map(_process_one_region, tasks))
 
-    features_list, labels_list = zip(*results)
-    features_stage_1 = np.concatenate(features_list, axis=0)
-    phis_labels_stage_1 = np.concatenate(labels_list, axis=0)
-    return features_stage_1, phis_labels_stage_1
+    features_list, labels_list, extra_info_list = zip(*results)
+    features = np.concatenate(features_list, axis=0)
+    labels = np.concatenate(labels_list, axis=0)
+    extra_info = np.concatenate(extra_info_list, axis=0)
+
+    return features, labels, extra_info
 
 
 # -------------------------------------------------------------------
 # 3) 存取函数
 # -------------------------------------------------------------------
-def save_features_labels(path, features, labels):
+def save_features_labels(path, features, labels, extra_infos):
     """
     将 features 和 labels 保存为压缩 npz 文件
     """
-    np.savez_compressed(path, features=features, labels=labels)
+    np.savez_compressed(path, features=features, labels=labels, extra_infos=extra_infos)
     print(f"→ 已保存数据到：'{path}'")
 
 
@@ -123,7 +134,7 @@ def load_features_labels(path):
     从 npz 文件加载 features 和 labels
     """
     data = np.load(path)
-    return data["features"], data["labels"]
+    return data["features"], data["labels"], data["extra_info"]
 
 
 def load_or_generate_features_labels(
@@ -138,21 +149,21 @@ def load_or_generate_features_labels(
     """
     if os.path.exists(data_file):
         print(f"→ 找到缓存文件，开始加载：'{data_file}'")
-        features, labels = load_features_labels(data_file)
+        features, labels, extra_infos = load_features_labels(data_file)
     else:
         print(f"→ 缓存文件不存在，开始生成：'{data_file}'")
         dop_info = doppler_info_module.DopplerInfo(
             config.c, config.fc, config.time_interval
         )
-        features, labels = get_features_and_labels(
+        features, labels, extra_infos = get_features_and_labels(
             detecting_region_nums=detecting_region_nums,
             lines_to_generate_per_region=lines_to_generate_per_region,
             doppler_info=dop_info,
             seed=seed,
             num_workers=num_workers,
         )
-        save_features_labels(data_file, features, labels)
-    return features, labels
+        save_features_labels(data_file, features, labels, extra_infos)
+    return features, labels, extra_infos
 
 
 def get_best_worker_count():
@@ -175,17 +186,19 @@ if __name__ == "__main__":
             config.stage_1_train_set_path,
             config.train_detecting_region_nums,
             config.train_num_of_lines_to_generate_per_region,
+            config.train_seed,
         ),
         (
             "测试集",
             config.stage_1_test_set_path,
             config.test_detecting_region_nums,
             config.test_num_of_lines_to_generate_per_region,
+            config.test_seed,
         ),
     ]
 
     print("========== stage_1 数据集 生成/加载 ==========")
-    for name, path, region_nums, lines_per_region in presets:
+    for name, path, region_nums, lines_per_region, seed in presets:
         print(f"\n--- 处理{name} ---")
         print(f"检查缓存路径：{path}")
 
@@ -193,11 +206,11 @@ if __name__ == "__main__":
         num_workers, cpu_cnt = get_best_worker_count()
         print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
 
-        features, labels = load_or_generate_features_labels(
+        features, labels, extra_infos = load_or_generate_features_labels(
             data_file=path,
             detecting_region_nums=region_nums,
             lines_to_generate_per_region=lines_per_region,
-            seed=42,
+            seed=seed,
             num_workers=num_workers,
         )
 

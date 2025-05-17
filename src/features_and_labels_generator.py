@@ -3,7 +3,7 @@ import math
 from scipy.optimize import least_squares
 
 
-def _get_d_phi(detecting_region_info, coord_a):
+def get_d_phi(detecting_region_info, coord_a):
     ref = detecting_region_info.transmittor_position
     phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
     # change range from -pi to pi to 0 to 2pi
@@ -13,11 +13,18 @@ def _get_d_phi(detecting_region_info, coord_a):
     return [d, phi]
 
 
+def get_labels(detecting_region_info, coords_a):
+    labels = []
+    for coord_a in coords_a:
+        labels.append(get_d_phi(detecting_region_info, coord_a))
+    return np.array(labels)
+
+
 def _get_labels(detecting_region_info, lines_a):
     labels = []
     for line in lines_a:
         for coord_a in line:
-            labels.append(_get_d_phi(detecting_region_info, coord_a))
+            labels.append(get_d_phi(detecting_region_info, coord_a))
     return np.array(labels)
 
 
@@ -59,11 +66,12 @@ def generate_features_and_labels(
 # 合起来训，即一次训练出四个φ
 import numpy as np
 
-def generate_features_and_labels_stage_1(
-    phis1234,    # (N,4) 或可转成 (N,4) 的 list
-    w,           # (N,), (N,w_dim), (w_dim,N) 或 list
-    doppler,     # (N,), (N,d_dim), (d_dim,N) 或 list
-    detecting_region_info
+
+def get_features(
+    phis1234,  # (N,4) 或可转成 (N,4) 的 list
+    w,  # (N,), (N,w_dim), (w_dim,N) 或 list
+    doppler,  # (N,), (N,d_dim), (d_dim,N) 或 list
+    detecting_region_info,
 ):
     """
     返回：
@@ -93,13 +101,13 @@ def generate_features_and_labels_stage_1(
             raise ValueError(f"{name}.shape={arr.shape}，既不是 (N,*) 也不是 (*,N)")
         raise ValueError(f"{name} 不支持 ndim={arr.ndim}")
 
-    w       = prep_matrix(w,      "w")
-    doppler = prep_matrix(doppler,"doppler")
+    w = prep_matrix(w, "w")
+    doppler = prep_matrix(doppler, "doppler")
 
     # ———— 3) 取三对 (ro, β)
-    ro1, beta1 = detecting_region_info.get_ro_beta_r1_t()
-    ro2, beta2 = detecting_region_info.get_ro_beta_r1_r2()
-    ro3, beta3 = detecting_region_info.get_ro_beta_r1_r3()
+    ro1, beta1 = detecting_region_info.get_ro_beta_t_r1()
+    ro2, beta2 = detecting_region_info.get_ro_beta_t_r2()
+    ro3, beta3 = detecting_region_info.get_ro_beta_t_r3()
 
     # ———— 4) 将上述标量/数组广播或重塑到 (N,1)
     def to_col(x, name):
@@ -116,36 +124,31 @@ def generate_features_and_labels_stage_1(
         # 如果是 (N, 1)
         if arr.ndim == 2 and arr.shape == (N, 1):
             return arr
-        raise ValueError(
-            f"{name} 的形状 {arr.shape} 无法广播到 (N,1) "
-            f"(N={N})"
-        )
+        raise ValueError(f"{name} 的形状 {arr.shape} 无法广播到 (N,1) " f"(N={N})")
 
-    c_ro1   = to_col(ro1,   "ro1")
+    c_ro1 = to_col(ro1, "ro1")
     c_beta1 = to_col(beta1, "beta1")
-    c_ro2   = to_col(ro2,   "ro2")
+    c_ro2 = to_col(ro2, "ro2")
     c_beta2 = to_col(beta2, "beta2")
-    c_ro3   = to_col(ro3,   "ro3")
+    c_ro3 = to_col(ro3, "ro3")
     c_beta3 = to_col(beta3, "beta3")
 
     # ———— 5) 横向拼接
-    features = np.concatenate([
-        c_ro1,   # (N,1)
-        c_beta1, # (N,1)
-        c_ro2,   # (N,1)
-        c_beta2, # (N,1)
-        c_ro3,   # (N,1)
-        c_beta3, # (N,1)
-        w,       # (N, w_dim)
-        doppler  # (N, d_dim)
-    ], axis=1)
-
-    # ———— 6) 得到 phis1234
-    labels = phis1234.copy()  # (N,4)
-
-    # ———— 7) labels 就是 cos(phis1234)
-    labels = np.cos(labels)
-    return features, labels
+    features = np.concatenate(
+        [
+            c_ro1,  # (N,1)
+            c_beta1,  # (N,1)
+            c_ro2,  # (N,1)
+            c_beta2,  # (N,1)
+            c_ro3,  # (N,1)
+            c_beta3,  # (N,1)
+            w,  # (N, w_dim)
+            doppler,  # (N, d_dim)
+        ],
+        axis=1,
+    )
+    # print('features:',features)
+    return features
 
 
 # 定义计算距离的函数

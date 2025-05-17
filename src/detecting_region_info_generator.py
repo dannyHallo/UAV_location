@@ -150,15 +150,15 @@ def generate_detecting_region_infos(num_configurations=500, seed=42) -> List[det
 
     detecting_region_infos = []
     for config in all_quadrilaterals:
-        # config[0] is receiver 1
-        receiver1 = np.array(config[0])
+        # config[0] is transmitter
+        transmitter = np.array(config[0])
 
         # take the other three points
         others = list(config[1:])     # make a mutable copy
         # random.shuffle(others)        # randomly permute them
 
         # first of the shuffled others is the transmitter
-        transmitter = np.array(others[0])
+        receiver1 = np.array(others[0])
         # the remaining two are receivers 2 & 3
         receiver2 = np.array(others[1])
         receiver3 = np.array(others[2])

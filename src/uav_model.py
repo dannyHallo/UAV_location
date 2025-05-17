@@ -36,7 +36,7 @@ class DnnModule1(nn.Module):
         self.bn8 = nn.BatchNorm1d(64)
         self.fc9 = nn.Linear(64, 32)
         self.bn9 = nn.BatchNorm1d(32)
-        self.fc10 = nn.Linear(32, 4)  # MARK
+        self.fc10 = nn.Linear(32, 2)  # MARK
         # Activation function can be assigned as a member variable
         self.activation = nn.ReLU()
 
