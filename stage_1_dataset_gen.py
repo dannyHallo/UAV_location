@@ -76,9 +76,6 @@ def _process_one_region(args):
     extra_infos = get_extra_infos(
         detecting_region_info=detecting_region_info, coords_a=coords_a
     )
-    print("features", features)
-    print("labels", labels)
-    print("extra_infos", extra_infos)
 
     return features, labels, extra_infos
 
