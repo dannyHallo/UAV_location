@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # stage_1_dataset_gen.py
-
+import torch
 import os
 import multiprocessing
 import time
@@ -8,6 +8,7 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
 import src.trajectory_generator as trajectory_generator
+from src.trajectory_dataset import TrajectoryDataset
 from src.w_and_doppler_generator import extract_coords_from_lines
 import src.get_phi_info as get_phi_info
 import src.w_and_doppler_generator as w_and_doppler_generator
@@ -21,17 +22,12 @@ import src.doppler_info as doppler_info_module
 # -------------------------------------------------------------------
 # 1) 对单个 detecting_region_info 的处理函数
 # -------------------------------------------------------------------
-def _process_one_region(args):
-    (
-        idx,
-        detecting_region_info,
-        lines_to_generate_per_region,
-        doppler_info,
-        base_seed,
-    ) = args
-
-    # 每个 region 用不同 seed
-    seed = base_seed + idx
+def construct_dataset(
+    detecting_region_info,
+    lines_to_generate_per_region,
+    doppler_info,
+    seed,
+) :
 
     # 生成两条轨迹
     lines_a, lines_b = trajectory_generator.generate_lines(
@@ -76,14 +72,30 @@ def _process_one_region(args):
     extra_infos = get_extra_infos(
         detecting_region_info=detecting_region_info, coords_a=coords_a
     )
-
     return features, labels, extra_infos
+    
+
+
+def _process_one_region(args) :
+    (
+        idx,
+        detecting_region_info,
+        lines_to_generate_per_region,
+        doppler_info,
+        base_seed,
+    ) = args
+    # 每个 region 用不同 seed
+    seed = base_seed + idx
+    trajectory_dataset = construct_dataset(
+        detecting_region_info, lines_to_generate_per_region, doppler_info, seed
+    )
+    return trajectory_dataset
 
 
 # -------------------------------------------------------------------
 # 2) 并行版的主函数
 # -------------------------------------------------------------------
-def get_features_and_labels(
+def get_trajectory_dataset(
     detecting_region_nums,
     lines_to_generate_per_region,
     doppler_info,
@@ -110,57 +122,54 @@ def get_features_and_labels(
     features_list, labels_list, extra_info_list = zip(*results)
     features = np.concatenate(features_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
-    extra_info = np.concatenate(extra_info_list, axis=0)
+    extra_infos = np.concatenate(extra_info_list, axis=0)
+    trajectory_dataset = TrajectoryDataset(features, labels,extra_infos)
 
-    return features, labels, extra_info
+    return trajectory_dataset
 
 
 # -------------------------------------------------------------------
 # 3) 存取函数
 # -------------------------------------------------------------------
-def save_features_labels(path, features, labels, extra_infos):
-    """
-    将 features 和 labels 保存为压缩 npz 文件
-    """
-    np.savez_compressed(path, features=features, labels=labels, extra_infos=extra_infos)
-    print(f"→ 已保存数据到：'{path}'")
+def save_dataset(path, trajectory_dataset):
+    torch.save(trajectory_dataset, path)
+    print(f"数据集已保存至: {path}")
 
 
-def load_features_labels(path):
-    """
-    从 npz 文件加载 features 和 labels
-    """
-    data = np.load(path)
-    return data["features"], data["labels"], data["extra_info"]
+def load_trajectory_dataset(path) -> TrajectoryDataset:
+    dataset = torch.load(path)
+    print(f"从 {path} 加载了数据集，包含 {len(dataset)} 个样本")
+    return dataset
 
 
-def load_or_generate_features_labels(
+def load_or_generate_trajectory_dataset(
     data_file,
     detecting_region_nums,
     lines_to_generate_per_region,
     seed=42,
     num_workers=None,
-):
+) -> TrajectoryDataset:
     """
     如果 data_file 存在就加载，否则运行生成流程并保存
     """
     if os.path.exists(data_file):
         print(f"→ 找到缓存文件，开始加载：'{data_file}'")
-        features, labels, extra_infos = load_features_labels(data_file)
+        trajectory_dataset = load_trajectory_dataset(data_file)
+        return trajectory_dataset
     else:
         print(f"→ 缓存文件不存在，开始生成：'{data_file}'")
         dop_info = doppler_info_module.DopplerInfo(
             config.c, config.fc, config.time_interval
         )
-        features, labels, extra_infos = get_features_and_labels(
+        trajectory_dataset = get_trajectory_dataset(
             detecting_region_nums=detecting_region_nums,
             lines_to_generate_per_region=lines_to_generate_per_region,
             doppler_info=dop_info,
             seed=seed,
             num_workers=num_workers,
         )
-        save_features_labels(data_file, features, labels, extra_infos)
-    return features, labels, extra_infos
+        save_dataset(data_file, trajectory_dataset)
+        return trajectory_dataset
 
 
 def get_best_worker_count():
@@ -203,15 +212,11 @@ if __name__ == "__main__":
         num_workers, cpu_cnt = get_best_worker_count()
         print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
 
-        features, labels, extra_infos = load_or_generate_features_labels(
+        trajectory_dataset = load_or_generate_trajectory_dataset(
             data_file=path,
             detecting_region_nums=region_nums,
             lines_to_generate_per_region=lines_per_region,
             seed=seed,
             num_workers=num_workers,
-        )
-
-        print(
-            f"{name} 生成/加载完毕，features.shape={features.shape}, labels.shape={labels.shape}"
         )
         print(f"耗时：{time.time() - start:.2f} 秒")

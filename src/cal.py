@@ -569,7 +569,7 @@ def main():
     visualize_trajectories(trajectories, quad_vertices)
     
     # 按时间间隔采样轨迹
-    time_interval = 0.3  # 每0.3秒采样一次
+    time_interval = 0.01  # 每0.3秒采样一次
     lines_a, lines_b = generateLines(num_lines=num_trajectories, time_interval=time_interval)
     
     # 可视化采样点
