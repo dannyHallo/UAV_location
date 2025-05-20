@@ -27,8 +27,7 @@ def construct_dataset(
     lines_to_generate_per_region,
     doppler_info,
     seed,
-) :
-
+):
     # 生成两条轨迹
     lines_a, lines_b = trajectory_generator.generate_lines(
         detecting_region_info=detecting_region_info,
