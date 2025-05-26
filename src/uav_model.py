@@ -18,7 +18,7 @@ class KANModel(nn.Module):
 class DnnModule1(nn.Module):
     def __init__(self):
         super(DnnModule1, self).__init__()
-        self.fc1 = nn.Linear(12, 64)
+        self.fc1 = nn.Linear(6, 64)
         self.bn1 = nn.BatchNorm1d(64)
         self.fc2 = nn.Linear(64, 128)
         self.bn2 = nn.BatchNorm1d(128)
@@ -30,7 +30,7 @@ class DnnModule1(nn.Module):
         self.bn5 = nn.BatchNorm1d(64)
         self.fc6 = nn.Linear(64, 32)
         self.bn6 = nn.BatchNorm1d(32)
-        self.fc7 = nn.Linear(32, 2)
+        self.fc7 = nn.Linear(32, 3)
         # Activation function can be assigned as a member variable
         self.activation = nn.ReLU()
 

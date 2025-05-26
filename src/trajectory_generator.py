@@ -1,6 +1,5 @@
 import numpy as np
 import random
-from src.detecting_region_info_generator import generate_detecting_region_infos
 from typing import List
 from src.detecting_region_info import DetectingRegionInfo
 
@@ -216,7 +215,6 @@ def part_lines(step_count_per_line, long_lines):
     
     return all_short_lines
 
-detecting_region_infos = generate_detecting_region_infos(500)
 
 def _get_quad_vertices_from_detecting_region_info(
     info: DetectingRegionInfo
@@ -230,16 +228,7 @@ def _get_quad_vertices_from_detecting_region_info(
         info.receiver_position_3,    # v4
     ]
 
-# ————————————————————————————————————————————————
-# 假设这是你生成所有 DetectingRegionInfo 的函数
-# from some_module import generate_detecting_region_infos
-# detecting_region_infos: List[DetectingRegionInfo] = generate_detecting_region_infos(500)
 
-# 批量提取每个四边形的顶点列表
-quad_vertices_list: List[List[np.ndarray]] = [
-    _get_quad_vertices_from_detecting_region_info(info)
-    for info in detecting_region_infos
-]
 
 
 
