@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def sign(p1, p2, p3):
     return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
 
@@ -34,4 +35,3 @@ def getTriangleSize(v1, v2, v3) -> float:
     det = np.linalg.det(matrix)
     area = 0.5 * np.abs(det)
     return area
-

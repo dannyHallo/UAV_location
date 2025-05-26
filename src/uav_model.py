@@ -114,7 +114,7 @@ class UavModel(nn.Module):
         # print(x.shape)
 
         # reshape x to original shape (restoring seq)
-        # x = x.view(batch_size, seq_len, 6) 
+        # x = x.view(batch_size, seq_len, 6)
         # x = self.lstm(x)
 
         # lstm already returns the last hidden state of the sequences, no need to reshape

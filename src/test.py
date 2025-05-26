@@ -35,7 +35,10 @@ def estimate_positions_optimized(distance_table, detecting_region_info):
         # 定义残差函数
         def residuals(vars):
             x, y = vars
-            return np.sqrt((x - receivers[:, 0])**2 + (y - receivers[:, 1])**2) - distances
+            return (
+                np.sqrt((x - receivers[:, 0]) ** 2 + (y - receivers[:, 1]) ** 2)
+                - distances
+            )
 
         # 初始猜测：使用接收器1的位置
         initial_guess = r1
@@ -53,6 +56,7 @@ def estimate_positions_optimized(distance_table, detecting_region_info):
 
     return np.array(predicted_positions)
 
+
 # 测试函数
 
 
@@ -62,17 +66,10 @@ def test_estimate_positions_optimized():
     receiver_pos2 = (100, 100)
     receiver_pos3 = (300, 150)
 
-    detecting_region = DetectingRegionInfo(
-        receiver_pos1, receiver_pos2, receiver_pos3)
+    detecting_region = DetectingRegionInfo(receiver_pos1, receiver_pos2, receiver_pos3)
 
     # 定义一些训练标签的位置
-    true_positions = np.array([
-        [120, 80],
-        [50, 50],
-        [200, 200],
-        [300, 100],
-        [250, 150]
-    ])
+    true_positions = np.array([[120, 80], [50, 50], [200, 200], [300, 100], [250, 150]])
 
     # 使用 calculate_distances 函数计算到三个接收器的距离
     distances = calculate_distances(true_positions, detecting_region)
@@ -84,13 +81,15 @@ def test_estimate_positions_optimized():
 
     # 使用 estimate_positions_optimized 函数估计位置
     estimated_positions = estimate_positions_optimized(
-        noisy_distances, detecting_region)
+        noisy_distances, detecting_region
+    )
 
     # 打印结果
     for i, (true, est) in enumerate(zip(true_positions, estimated_positions)):
         print(f"样本 {i+1}:")
         print(f"  真实位置: (x={true[0]:.3f}, y={true[1]:.3f})")
         print(f"  估计位置: (x={est[0]:.3f}, y={est[1]:.3f})\n")
+
 
 # 定义 calculate_distances 函数（用户提供的函数）
 
@@ -127,8 +126,7 @@ def calculate_distances(train_label, detecting_region_info):
     )
 
     # 将结果组合成 (n, 3) 形状的数组
-    distances = np.stack(
-        (distances_to_r1, distances_to_r2, distances_to_r3), axis=1)
+    distances = np.stack((distances_to_r1, distances_to_r2, distances_to_r3), axis=1)
 
     return distances
 

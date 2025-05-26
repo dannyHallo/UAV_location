@@ -37,6 +37,7 @@ import src.get_phi_info as get_phi_info
 
 import numpy as np
 
+
 def calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
     """
     计算瞬时速度大小 v = |coord_b - coord_a| / Δt
@@ -56,7 +57,9 @@ def calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
 
     # 形状检查
     if coord_a.shape != coord_b.shape:
-        raise ValueError(f"coord_a{coord_a.shape} 与 coord_b{coord_b.shape} 必须形状一致")
+        raise ValueError(
+            f"coord_a{coord_a.shape} 与 coord_b{coord_b.shape} 必须形状一致"
+        )
 
     # 计算位移
     disp = coord_b - coord_a
@@ -176,12 +179,11 @@ def generateWAndDoppler(
     doppler_info: doppler_info,
     coords_a,
     coords_b,
-    phis_1234
+    phis_1234,
 ):
     """
     lines 输入格式: 见 NewLinesGenerator.py
     """
-
 
     data_length = np.shape(coords_a)[0]
     w = np.zeros([data_length, 3])
@@ -260,24 +262,9 @@ def generateWAndDoppler(
         )
 
         # 使用第i个速度值
-        v12 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi2))
-            / doppler_info.c
-        )
-        v13 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi3))
-            / doppler_info.c
-        )
-        v14 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi4))
-            / doppler_info.c
-        )
+        v12 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi2)) / doppler_info.c
+        v13 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi3)) / doppler_info.c
+        v14 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi4)) / doppler_info.c
 
         w[i][0] = w12
         w[i][1] = w13

@@ -4,7 +4,10 @@ from scipy.spatial import ConvexHull
 import src.detecting_region_info as detecting_region_info
 import numpy as np
 
-def generate_detecting_region_infos(num_configurations=500, seed=42) -> List[detecting_region_info.DetectingRegionInfo]:
+
+def generate_detecting_region_infos(
+    num_configurations=500, seed=42
+) -> List[detecting_region_info.DetectingRegionInfo]:
     """
     生成指定数量的四点配置，满足以下条件：
     - 第一个点是原点(0,0)
@@ -154,7 +157,7 @@ def generate_detecting_region_infos(num_configurations=500, seed=42) -> List[det
         transmitter = np.array(config[0])
 
         # take the other three points
-        others = list(config[1:])     # make a mutable copy
+        others = list(config[1:])  # make a mutable copy
         # random.shuffle(others)        # randomly permute them
 
         # first of the shuffled others is the transmitter
