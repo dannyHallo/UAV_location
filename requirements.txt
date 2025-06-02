@@ -1,0 +1,13 @@
+# note: pytorch should be installed separately
+
+matplotlib
+numpy
+scikit_learn
+setuptools
+ipykernel
+sympy
+torch
+PyYAML
+tqdm
+imageio
+pandas

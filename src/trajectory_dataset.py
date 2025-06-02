@@ -1,9 +1,9 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 
 class TrajectoryDataset(Dataset):
-    def __init__(self, features, labels):
+    def __init__(self, features, labels, extra_infos):
         """
         Initialize the dataset with features and labels.
         Args:
@@ -14,6 +14,7 @@ class TrajectoryDataset(Dataset):
         """
         self.features = torch.tensor(features, dtype=torch.float32)
         self.labels = torch.tensor(labels, dtype=torch.float32)
+        self.extra_infos = torch.tensor(extra_infos, dtype=torch.float32)
 
     def __len__(self):
         """Return the total number of samples in the dataset."""
@@ -21,4 +22,4 @@ class TrajectoryDataset(Dataset):
 
     def __getitem__(self, index):
         """Retrieve the nth sample from the dataset."""
-        return self.features[index], self.labels[index]
+        return self.features[index], self.labels[index], self.extra_infos[index]

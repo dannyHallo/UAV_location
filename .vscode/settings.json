@@ -1,0 +1,7 @@
+{
+  "command-runner.commands": {
+    "conda activate": "conda activate UAV_location",
+    "conda install env": "conda activate UAV_location && pip install -r requirements.txt",
+    "generate stage 1 dataset": "python stage_1_dataset_gen.py"
+  }
+}
