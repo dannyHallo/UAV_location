@@ -1,4 +1,4 @@
-# TODO: make this work properly (add pytorch, etc.)
+# note: pytorch should be installed separately
 
 matplotlib
 numpy
