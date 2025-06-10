@@ -22,7 +22,6 @@ def construct_dataset(
     doppler_info,
     seed,
 ):
-    # 生成两条轨迹
     lines_a, lines_b = trajectory_generator.generate_lines(
         detecting_region_info=detecting_region_info,
         num_lines=lines_to_generate_per_region,
@@ -33,7 +32,6 @@ def construct_dataset(
     coords_a = extract_coords_from_lines(lines_a)
     coords_b = extract_coords_from_lines(lines_b)
 
-    # 计算 phi1..4
     phis_1234 = []
     for ca, cb in zip(coords_a, coords_b):
         phi1, phi2, phi3, phi4 = get_phi_info.get_angle_phi(
@@ -41,7 +39,6 @@ def construct_dataset(
         )
         phis_1234.append([phi1, phi2, phi3, phi4])
 
-    # 计算 w 和 doppler
     w, doppler = w_and_doppler_generator.generate_w_and_doppler(
         detecting_region_info=detecting_region_info,
         doppler_info=doppler_info,
