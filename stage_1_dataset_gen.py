@@ -115,21 +115,18 @@ def get_trajectory_dataset(
     return trajectory_dataset
 
 
-# -------------------------------------------------------------------
-# 3) 存取函数
-# -------------------------------------------------------------------
-def save_dataset(path, trajectory_dataset):
-    torch.save(trajectory_dataset, path)
-    print(f"数据集已保存至: {path}")
-
-
-def load_trajectory_dataset(path) -> TrajectoryDataset:
+def load_dataset(path) -> TrajectoryDataset:
     dataset = torch.load(path)
     print(f"从 {path} 加载了数据集，包含 {len(dataset)} 个样本")
     return dataset
 
 
-def load_or_generate_trajectory_dataset(
+def _save_dataset(path, trajectory_dataset):
+    torch.save(trajectory_dataset, path)
+    print(f"数据集已保存至: {path}")
+
+
+def _load_or_generate_trajectory_dataset(
     save_path,
     detecting_region_nums,
     lines_to_generate_per_region,
@@ -138,7 +135,7 @@ def load_or_generate_trajectory_dataset(
 ) -> TrajectoryDataset:
     if os.path.exists(save_path):
         print(f"→ 找到缓存文件，开始加载：'{save_path}'")
-        trajectory_dataset = load_trajectory_dataset(save_path)
+        trajectory_dataset = load_dataset(save_path)
         return trajectory_dataset
     else:
         print(f"→ 缓存文件不存在，开始生成：'{save_path}'")
@@ -152,11 +149,11 @@ def load_or_generate_trajectory_dataset(
             seed=seed,
             num_workers=num_workers,
         )
-        save_dataset(save_path, trajectory_dataset)
+        _save_dataset(save_path, trajectory_dataset)
         return trajectory_dataset
 
 
-def get_best_worker_count() -> tuple[int, int]:
+def _get_best_worker_count() -> tuple[int, int]:
     """
     Returns: (num_workers, cpu_count)
     """
@@ -190,10 +187,10 @@ def main():
         print(f"检查缓存路径：{path}")
 
         start = time.time()
-        num_workers, cpu_cnt = get_best_worker_count()
+        num_workers, cpu_cnt = _get_best_worker_count()
         print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
 
-        load_or_generate_trajectory_dataset(
+        _load_or_generate_trajectory_dataset(
             save_path=path,
             detecting_region_nums=region_nums,
             lines_to_generate_per_region=lines_per_region,
