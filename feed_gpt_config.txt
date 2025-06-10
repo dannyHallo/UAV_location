@@ -1,0 +1,23 @@
+# Configuration for the context-feeding script.
+# List all relevant source files here, one per line.
+# Lines starting with '#' are ignored.
+
+src/config.py
+src/cal.py
+src/uav_model.py
+src/loss_func.py
+src/coord_dataset.py
+src/detecting_region_info_generator.py
+src/extra_info_generator.py
+src/features_and_labels_generator.py
+src/trajectory_dataset.py
+src/trajectory_generator.py
+src/w_and_doppler_generator.py
+src/detecting_region_info.py
+src/doppler_info.py
+src/get_phi_info.py
+src/line_gen_util.py
+src/debug_utils.py
+
+lab.ipynb
+visualization.py

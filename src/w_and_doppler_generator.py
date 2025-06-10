@@ -2,7 +2,6 @@ import numpy as np
 import math
 import src.detecting_region_info as detecting_region_info
 import src.doppler_info as doppler_info
-import src.get_phi_info as get_phi_info
 
 
 def _calculate_instantaneous_speeds(coord_a, coord_b, time_interval):

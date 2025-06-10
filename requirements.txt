@@ -1,4 +1,5 @@
 # note: pytorch should be installed separately
+# torch
 
 matplotlib
 numpy
@@ -6,8 +7,9 @@ scikit_learn
 setuptools
 ipykernel
 sympy
-torch
 PyYAML
 tqdm
 imageio
 pandas
+shapely
+ipywidgets

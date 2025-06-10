@@ -2,7 +2,6 @@ from torch.utils.data import Dataset
 import torch
 
 
-# 定义一个 PyTorch 数据集
 class CoordDataset(Dataset):
     def __init__(self, inputs, coords):
         # 确保 inputs 和 coords 都是 torch.float32 类型

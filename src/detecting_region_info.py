@@ -67,22 +67,49 @@ class DetectingRegionInfo:
         beta3 = np.arctan2(delta[1], delta[0])
         return rho3, beta3
 
-    def draw_figure(self, color="r"):
-        _, ax = plt.subplots()
+    def draw_figure(self, ax=None, color="r", title=None):
+        """
+        Draws the detecting region quadrilateral.
 
-        # compute and apply a padded bounding box
+        If an `ax` (Matplotlib Axes object) is provided, it draws on that.
+        Otherwise, it creates a new figure and axes to draw on and displays it.
+
+        Args:
+            ax (matplotlib.axes.Axes, optional): The axes to draw on. Defaults to None.
+            color (str, optional): The color for the plot elements. Defaults to "r".
+            title (str, optional): An optional title for the plot.
+        """
+        # If no axes are provided, create a new figure and axes.
+        # This maintains the original behavior of creating a standalone plot.
+        show_plot = False
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 7))
+            show_plot = True
+
+        # Compute and apply a padded bounding box to frame the plot nicely
         (x_min, y_min), (x_max, y_max) = self.get_bounding_box()
-        padding = 10
+        padding = 20
         ax.set_xlim(x_min - padding, x_max + padding)
         ax.set_ylim(y_min - padding, y_max + padding)
 
-        # draw the quadrilateral
+        # Set plot labels and title
+        ax.set_xlabel("X-coordinate")
+        ax.set_ylabel("Y-coordinate")
+        if title:
+            ax.set_title(title)
+        ax.grid(True)
+        ax.set_aspect("equal", adjustable="box")
+
+        # Draw the quadrilateral boundary
         quad = Polygon(
-            [self.v1, self.v2, self.v3, self.v4], fill=False, edgecolor=color
+            [self.v1, self.v2, self.v3, self.v4],
+            fill=False,
+            edgecolor=color,
+            linewidth=2,
         )
         ax.add_patch(quad)
 
-        # mark and label each vertex
+        # Mark and label each vertex for clarity
         verts = {
             "T / pivot / v1": self.v1,
             "R1 / v2": self.v2,
@@ -90,18 +117,20 @@ class DetectingRegionInfo:
             "R3 / v4": self.v4,
         }
         for label, (x, y) in verts.items():
-            ax.scatter(x, y, color=color)  # draw a dot
+            ax.scatter(x, y, color=color, zorder=5)  # zorder ensures points are on top
             ax.text(
-                x,
-                y,
+                x + padding * 0.05,
+                y + padding * 0.05,
                 label,
-                fontsize=12,
+                fontsize=9,
                 fontweight="bold",
                 color=color,
                 ha="left",
                 va="bottom",
-                # offset so text doesn't sit directly on the point
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
             )
 
-        plt.show()
+        # If a new figure was created by this method, display it.
+        if show_plot:
+            plt.tight_layout()
+            plt.show()

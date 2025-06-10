@@ -4,7 +4,10 @@ from scipy.spatial import ConvexHull
 import src.detecting_region_info as detecting_region_info
 import numpy as np
 
-def generate_detecting_region_infos(num_configurations=500, seed=42) -> List[detecting_region_info.DetectingRegionInfo]:
+
+def generate_detecting_region_infos(
+    num_configurations=500, seed=42
+) -> List[detecting_region_info.DetectingRegionInfo]:
     """
     生成指定数量的四点配置，满足以下条件：
     - 第一个点是原点(0,0)
@@ -141,34 +144,50 @@ def generate_detecting_region_infos(num_configurations=500, seed=42) -> List[det
         all_quadrilaterals.append(quad_points)
         successful_generations += 1
 
-    # First 5 elements of all_quadrilaterals:
-    # [[0, 0], [107.01878572092521, 53.00947095264386], [17.42663234205817, 121.18813320162731], [-78.23541667557139, 79.97330130502992]]
-    # [[0, 0], [83.30014032487031, 80.10271420059038], [-18.490630333630683, 129.20024280395432], [-116.26018079288995, 70.1944198260255]]
-    # [[0, 0], [106.58356928846854, 74.3748627437956], [11.196573160113298, 135.9726058558487], [-90.64257842755903, 72.01524932319562]]
-    # [[0, 0], [-95.56013906609807, 52.52602721906696], [-123.33439448104394, -66.15769423122934], [-13.99418136314565, -115.8676052882015]]
-    # [[0, 0], [-112.80956816400752, -0.041294315802823826], [-50.47409785419665, -98.89688198979262], [67.6838375888345, -82.7517223516432]]
-
     detecting_region_infos = []
-    for config in all_quadrilaterals:
-        # config[0] is transmitter
-        transmitter = np.array(config[0])
+    for quad_points in all_quadrilaterals:
+        # Convert to numpy array for calculations
+        points_arr = np.array(quad_points)
 
-        # take the other three points
-        others = list(config[1:])     # make a mutable copy
-        # random.shuffle(others)        # randomly permute them
+        # 1. Calculate the centroid of the four points. This will be our reference
+        #    point for angular sorting to ensure the vertices are ordered correctly.
+        centroid = np.mean(points_arr, axis=0)
 
-        # first of the shuffled others is the transmitter
-        receiver1 = np.array(others[0])
-        # the remaining two are receivers 2 & 3
-        receiver2 = np.array(others[1])
-        receiver3 = np.array(others[2])
+        # 2. Sort the points counter-clockwise around the centroid.
+        #    This guarantees that when connected sequentially, they form a simple
+        #    (non-self-intersecting) polygon.
+        sorted_points = sorted(
+            points_arr,
+            key=lambda p: np.arctan2(p[1] - centroid[1], p[0] - centroid[0]),
+        )
+
+        # 3. The transmitter is fixed at (0,0). Find its index in the sorted list.
+        origin = np.array([0.0, 0.0])
+        origin_index = -1
+        for i, p in enumerate(sorted_points):
+            if np.allclose(p, origin):
+                origin_index = i
+                break
+
+        if origin_index == -1:
+            # This should not happen given the generation logic, but as a safeguard:
+            print("Warning: Origin (0,0) not found in generated points. Skipping.")
+            continue
+
+        # 4. Assign the transmitter and receivers in their new sorted order.
+        #    v1 is the transmitter. v2, v3, v4 are the subsequent vertices
+        #    in counter-clockwise order. This ensures the polygon is drawn correctly.
+        v1 = sorted_points[origin_index]
+        v2 = sorted_points[(origin_index + 1) % 4]
+        v3 = sorted_points[(origin_index + 2) % 4]
+        v4 = sorted_points[(origin_index + 3) % 4]
 
         detecting_region_infos.append(
             detecting_region_info.DetectingRegionInfo(
-                transmittor_position=transmitter,
-                receiver_position_1=receiver1,
-                receiver_position_2=receiver2,
-                receiver_position_3=receiver3,
+                transmittor_position=v1,
+                receiver_position_1=v2,
+                receiver_position_2=v3,
+                receiver_position_3=v4,
             )
         )
 
