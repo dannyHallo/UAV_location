@@ -59,7 +59,6 @@ def construct_dataset(
         phis1234=phis_1234,
         w=w,
         doppler=doppler,
-        detecting_region_info=detecting_region_info,
     )
 
     extra_infos = get_extra_infos(

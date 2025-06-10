@@ -3,66 +3,13 @@ from scipy.optimize import least_squares
 from src.detecting_region_info import DetectingRegionInfo
 
 
-def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_a):
-    ref = detecting_region_info.transmittor_position
-    phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
-    # change range from -pi to pi to 0 to 2pi
-    if phi < 0:
-        phi += 2 * np.pi
-    d = np.sqrt((coord_a[0] - ref[0]) ** 2 + (coord_a[1] - ref[1]) ** 2)
-    return [d, np.sin(phi), np.cos(phi)]
-
-
-def get_labels(detecting_region_info: DetectingRegionInfo, coords_a):
-    labels = []
-    for coord_a in coords_a:
-        labels.append(_get_d_sin_cos_phi(detecting_region_info, coord_a))
-    return np.array(labels)
-
-
-def _extract_coords_from_lines(lines):
-    """
-    Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
-    Each coordinate is a 2D point.
-    Args:
-        lines: A list of lines, where each line is a list of coordinates.
-    Returns:
-        A numpy array containing all coordinates from the lines.
-    """
-    coords = []
-    for line in lines:
-        coords.extend(line)
-    return np.array(coords)
-
-
-def generate_features_and_labels(
-    lines_a,
-    w,
-    doppler,
-    step_count_per_line,
-):
-    num_of_lines_to_generate = len(lines_a)
-    features = np.concatenate((w, doppler), axis=1)
-    labels = _extract_coords_from_lines(lines_a)
-    reshaped_features = features.reshape(
-        num_of_lines_to_generate, step_count_per_line, 6
-    )
-    reshaped_labels = labels.reshape(num_of_lines_to_generate, step_count_per_line, 2)
-
-    # drop the sequence of the label
-    reshaped_labels = reshaped_labels[:, -1, :]
-
-    return [reshaped_features, reshaped_labels]
-
-
 def get_features(
     phis1234,
     w,
     doppler,
-    detecting_region_info: DetectingRegionInfo,
 ):
     """
-    返回：
+    Returns:
       features: np.ndarray, shape (N, 6 + w_dim + d_dim)
       labels:   np.ndarray, shape (N, 4) == phis1234
     """
@@ -92,34 +39,32 @@ def get_features(
     w = prep_matrix(w, "w")
     doppler = prep_matrix(doppler, "doppler")
 
-    # ———— 3) 取三对 (ro, β)
-    ro1, beta1 = detecting_region_info.get_ro_beta_t_r1()
-    ro2, beta2 = detecting_region_info.get_ro_beta_t_r2()
-    ro3, beta3 = detecting_region_info.get_ro_beta_t_r3()
+    # ro1, beta1 = detecting_region_info.get_ro_beta_t_r1()
+    # ro2, beta2 = detecting_region_info.get_ro_beta_t_r2()
+    # ro3, beta3 = detecting_region_info.get_ro_beta_t_r3()
 
-    # ———— 4) 将上述标量/数组广播或重塑到 (N,1)
-    def to_col(x, name):
-        arr = np.asarray(x, dtype=float)
-        # 如果是纯标量
-        if arr.size == 1:
-            return np.full((N, 1), arr.item(), dtype=float)
-        # 如果是一维，且正好长度 N
-        if arr.ndim == 1 and arr.shape[0] == N:
-            return arr.reshape(N, 1)
-        # 如果是 (1, N)
-        if arr.ndim == 2 and arr.shape == (1, N):
-            return arr.reshape(N, 1)
-        # 如果是 (N, 1)
-        if arr.ndim == 2 and arr.shape == (N, 1):
-            return arr
-        raise ValueError(f"{name} 的形状 {arr.shape} 无法广播到 (N,1) " f"(N={N})")
+    # def to_col(x, name):
+    #     arr = np.asarray(x, dtype=float)
+    #     # 如果是纯标量
+    #     if arr.size == 1:
+    #         return np.full((N, 1), arr.item(), dtype=float)
+    #     # 如果是一维，且正好长度 N
+    #     if arr.ndim == 1 and arr.shape[0] == N:
+    #         return arr.reshape(N, 1)
+    #     # 如果是 (1, N)
+    #     if arr.ndim == 2 and arr.shape == (1, N):
+    #         return arr.reshape(N, 1)
+    #     # 如果是 (N, 1)
+    #     if arr.ndim == 2 and arr.shape == (N, 1):
+    #         return arr
+    #     raise ValueError(f"{name} 的形状 {arr.shape} 无法广播到 (N,1) " f"(N={N})")
 
-    c_ro1 = to_col(ro1, "ro1")
-    c_beta1 = to_col(beta1, "beta1")
-    c_ro2 = to_col(ro2, "ro2")
-    c_beta2 = to_col(beta2, "beta2")
-    c_ro3 = to_col(ro3, "ro3")
-    c_beta3 = to_col(beta3, "beta3")
+    # c_ro1 = to_col(ro1, "ro1")
+    # c_beta1 = to_col(beta1, "beta1")
+    # c_ro2 = to_col(ro2, "ro2")
+    # c_beta2 = to_col(beta2, "beta2")
+    # c_ro3 = to_col(ro3, "ro3")
+    # c_beta3 = to_col(beta3, "beta3")
 
     # ———— 5) 横向拼接
     features = np.concatenate(
@@ -135,8 +80,14 @@ def get_features(
         ],
         axis=1,
     )
-    # print('features:',features)
     return features
+
+
+def get_labels(detecting_region_info: DetectingRegionInfo, coords_a):
+    labels = []
+    for coord_a in coords_a:
+        labels.append(_get_d_sin_cos_phi(detecting_region_info, coord_a))
+    return np.array(labels)
 
 
 # 定义计算距离的函数
@@ -166,7 +117,31 @@ def calculate_distances(train_label, detecting_region_info):
     return distances
 
 
-# MARK: unused
+def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_a):
+    ref = detecting_region_info.transmittor_position
+    phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
+    # change range from -pi to pi to 0 to 2pi
+    if phi < 0:
+        phi += 2 * np.pi
+    d = np.sqrt((coord_a[0] - ref[0]) ** 2 + (coord_a[1] - ref[1]) ** 2)
+    return [d, np.sin(phi), np.cos(phi)]
+
+
+def _extract_coords_from_lines(lines):
+    """
+    Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
+    Each coordinate is a 2D point.
+    Args:
+        lines: A list of lines, where each line is a list of coordinates.
+    Returns:
+        A numpy array containing all coordinates from the lines.
+    """
+    coords = []
+    for line in lines:
+        coords.extend(line)
+    return np.array(coords)
+
+
 # estimate_positions_optimized 函数：
 # 输入：距离表和检测区域信息。
 # 方法：
