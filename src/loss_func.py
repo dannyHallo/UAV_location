@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
-
-# sin 和 cos之间的约束 平方相加等于1
 
 
 class CartesianTestLoss(nn.Module):

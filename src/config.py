@@ -3,7 +3,7 @@ stage_1_test_set_path = "cache/stage_1_test.pt"
 
 time_interval = 0.01
 train_num_of_lines_to_generate_per_region = 8000
-test_num_of_lines_to_generate_per_region = 1000
+test_num_of_lines_to_generate_per_region = 2000
 train_detecting_region_nums = 1
 test_detecting_region_nums = 1
 visualize_detecting_region_nums = 1

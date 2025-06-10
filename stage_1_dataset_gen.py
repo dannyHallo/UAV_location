@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # stage_1_dataset_gen.py
 import torch
 import os

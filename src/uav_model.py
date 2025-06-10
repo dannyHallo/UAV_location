@@ -1,8 +1,7 @@
-# 定义更深的神经网络模型
-import torch
 import torch.nn as nn
-import torch.nn.functional as f
 from src.kan import KAN
+import torch
+import torch.nn.functional as F
 
 
 class KANModel(nn.Module):
@@ -13,84 +12,6 @@ class KANModel(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class SpatialLocator(nn.Module):
-    def __init__(self, input_dim=6, output_dim=3):
-        super(SpatialLocator, self).__init__()
-        
-        # 增强特征提取模块
-        self.feature_extractor = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.BatchNorm1d(128),
-            nn.LeakyReLU(0.1),
-            
-            nn.Linear(128, 256),
-            nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.1),
-            
-            nn.Linear(256, 512),
-            nn.BatchNorm1d(512),
-            nn.LeakyReLU(0.1)
-        )
-        
-        # 空间注意力机制
-        self.spatial_attention = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 512),
-            nn.Sigmoid()
-        )
-        
-        # 残差连接
-        self.residual = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.BatchNorm1d(512)
-        ) if input_dim != 512 else nn.Identity()
-        
-        # 输出回归模块
-        self.regressor = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.1),
-            
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.LeakyReLU(0.1),
-            
-            nn.Linear(128, output_dim)
-        )
-        
-        # 初始化权重
-        self._init_weights()
-
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='leaky_relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-    
-    def forward(self, x):
-        # 特征提取
-        features = self.feature_extractor(x)
-        
-        # 空间注意力
-        attention_weights = self.spatial_attention(features)
-        attended_features = features * attention_weights
-        
-        # 残差连接
-        residual = self.residual(x)
-        combined = attended_features + residual
-        
-        # 回归输出
-        return self.regressor(combined)
-
 
 
 class DnnModule1(nn.Module):
@@ -121,6 +42,162 @@ class DnnModule1(nn.Module):
         x = self.activation(self.bn6(self.fc6(x)))
         x = self.fc7(x)  # Usually no batch norm just before the final layer
         return x
+
+class EnhancedDualExpertModel(nn.Module):
+    """增强型双专家模型，专门处理轨迹突起问题"""
+    def __init__(self, input_dim=6, dropout_rate=0.15):
+        super(EnhancedDualExpertModel, self).__init__()
+        
+        # 空间感知特征增强器
+        self.feature_transform = nn.Sequential(
+            nn.Linear(input_dim, input_dim*2),
+            nn.BatchNorm1d(input_dim*2),
+            nn.LeakyReLU(0.1),
+        )
+        
+        # 空间位置编码
+        self.spatial_encoder = nn.Sequential(
+            nn.Linear(input_dim, 16),
+            nn.BatchNorm1d(16),
+            nn.Tanh(),
+            nn.Linear(16, input_dim),
+            nn.BatchNorm1d(input_dim),
+            nn.Tanh(),
+        )
+        
+        # 计算合并后的特征维度
+        combined_dim = input_dim + input_dim*2 + input_dim  # 原始 + 变换 + 空间编码
+        
+        # 特征合并 - 修正输入输出维度
+        self.feature_combiner = nn.Sequential(
+            nn.Linear(combined_dim, input_dim*3),  # 修正输入维度
+            nn.BatchNorm1d(input_dim*3),
+            nn.LeakyReLU(0.1),
+        )
+        
+        enhanced_dim = input_dim*3
+        
+        # 专家选择网络
+        self.expert_selector = nn.Sequential(
+            nn.Linear(enhanced_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1),
+            nn.Linear(32, 2),
+            nn.Softmax(dim=1)
+        )
+        
+        # 直线段专家网络
+        self.straight_expert = nn.Sequential(
+            nn.Linear(enhanced_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, 96),
+            nn.BatchNorm1d(96),
+            nn.ReLU(),
+        )
+        
+        # 曲线段专家网络
+        self.curve_expert = nn.Sequential(
+            nn.Linear(enhanced_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.1),
+            nn.Linear(128, 96),
+            nn.BatchNorm1d(96),
+            nn.LeakyReLU(0.1),
+        )
+        
+        # 集成层
+        self.ensemble = nn.Sequential(
+            nn.Linear(96, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1),
+        )
+        
+        # 输出层
+        self.distance_head = nn.Linear(32, 1)
+        self.angle_head = nn.Linear(32, 2)
+        
+        # 异常检测与平滑层 - 修正输入维度
+        self.outlier_detector = nn.Sequential(
+            nn.Linear(32 + 3, 32),  # 集成特征 + 基本输出
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1),
+            nn.Linear(32, 1),
+            nn.Sigmoid(),
+        )
+        
+        self.smoothing_net = nn.Sequential(
+            nn.Linear(32 + 3, 32),  # 集成特征 + 基本输出
+            nn.BatchNorm1d(32),
+            nn.Tanh(),
+            nn.Linear(32, 3),
+        )
+        
+        # 初始化权重
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0)
+        
+    def forward(self, x):
+        # 特征增强 - 明确计算维度
+        base_features = self.feature_transform(x)  # 6 → 12
+        spatial_encoding = self.spatial_encoder(x)  # 6 → 6
+        
+        # 连接所有特征 - 明确维度
+        combined = torch.cat([x, base_features, spatial_encoding], dim=1)  # 6 + 12 + 6 = 24
+        enhanced_x = self.feature_combiner(combined)  # 24 → 18
+        
+        # 专家选择
+        expert_weights = self.expert_selector(enhanced_x)
+        
+        # 各专家的输出
+        straight_out = self.straight_expert(enhanced_x)
+        curve_out = self.curve_expert(enhanced_x)
+        
+        # 按权重组合专家输出
+        weighted_straight = straight_out * expert_weights[:, 0:1]
+        weighted_curve = curve_out * expert_weights[:, 1:2]
+        
+        # 组合专家输出
+        combined_features = weighted_straight + weighted_curve
+        
+        # 集成处理
+        ensemble_features = self.ensemble(combined_features)
+        
+        # 基本输出
+        distance = torch.abs(self.distance_head(ensemble_features))
+        angle_components = self.angle_head(ensemble_features)
+        basic_output = torch.cat([distance, angle_components], dim=1)
+        
+        # 异常检测与平滑
+        combined_for_outlier = torch.cat([ensemble_features, basic_output], dim=1)
+        outlier_score = self.outlier_detector(combined_for_outlier)
+        smooth_correction = self.smoothing_net(combined_for_outlier)
+        
+        # 应用平滑修正
+        final_output = basic_output * (1 - outlier_score) + smooth_correction * outlier_score
+        
+        return final_output
 
 
 class LSTMModule(nn.Module):
@@ -172,6 +249,7 @@ class UavModel(nn.Module):
         super(UavModel, self).__init__()
         # self.kan = KANModel()
         self.dnn1 = DnnModule1()
+        # self.dual_positioning = EnhancedDualExpertModel()
         # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
         # self.lstm = LSTMModule(input_dim=6, output_dim=2,
         #                        hidden_dim=128, num_layers=2, dropout_rate=0.2)
@@ -186,13 +264,14 @@ class UavModel(nn.Module):
 
         # x = self.kan(x)
         x = self.dnn1(x)
+        # x = self.dual_positioning(x)
 
         # x = x.view(seq_len,batch_size,2)
         # x = self.transformer(x)
         # print(x.shape)
 
         # reshape x to original shape (restoring seq)
-        # x = x.view(batch_size, seq_len, 6) 
+        # x = x.view(batch_size, seq_len, 6)
         # x = self.lstm(x)
 
         # lstm already returns the last hidden state of the sequences, no need to reshape
