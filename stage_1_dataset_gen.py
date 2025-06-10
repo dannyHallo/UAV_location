@@ -4,7 +4,6 @@ import multiprocessing
 import time
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
-
 import src.trajectory_generator as trajectory_generator
 from src.trajectory_dataset import TrajectoryDataset
 from src.w_and_doppler_generator import extract_coords_from_lines
@@ -36,9 +35,9 @@ def construct_dataset(
 
     # 计算 phi1..4
     phis_1234 = []
-    for coord_a, coord_b in zip(coords_a, coords_b):
+    for ca, cb in zip(coords_a, coords_b):
         phi1, phi2, phi3, phi4 = get_phi_info.get_angle_phi(
-            detecting_region_info, coord_a, coord_b
+            detecting_region_info, ca, cb
         )
         phis_1234.append([phi1, phi2, phi3, phi4])
 
@@ -51,7 +50,7 @@ def construct_dataset(
         phis_1234=phis_1234,
     )
     labels = features_and_labels_generator.get_labels(
-        detecting_region_info=detecting_region_info, coords_a=coords_a
+        detecting_region_info=detecting_region_info, coords_b=coords_b
     )
 
     # 生成特征和标签
@@ -62,7 +61,7 @@ def construct_dataset(
     )
 
     extra_infos = get_extra_infos(
-        detecting_region_info=detecting_region_info, coords_a=coords_a
+        detecting_region_info=detecting_region_info, coords_a=coords_b
     )
     return features, labels, extra_infos
 

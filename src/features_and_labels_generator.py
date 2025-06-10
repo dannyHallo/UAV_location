@@ -83,10 +83,10 @@ def get_features(
     return features
 
 
-def get_labels(detecting_region_info: DetectingRegionInfo, coords_a):
+def get_labels(detecting_region_info: DetectingRegionInfo, coords_b):
     labels = []
-    for coord_a in coords_a:
-        labels.append(_get_d_sin_cos_phi(detecting_region_info, coord_a))
+    for c in coords_b:
+        labels.append(_get_d_sin_cos_phi(detecting_region_info, c))
     return np.array(labels)
 
 
