@@ -39,42 +39,9 @@ def get_features(
     w = prep_matrix(w, "w")
     doppler = prep_matrix(doppler, "doppler")
 
-    # ro1, beta1 = detecting_region_info.get_ro_beta_t_r1()
-    # ro2, beta2 = detecting_region_info.get_ro_beta_t_r2()
-    # ro3, beta3 = detecting_region_info.get_ro_beta_t_r3()
-
-    # def to_col(x, name):
-    #     arr = np.asarray(x, dtype=float)
-    #     # 如果是纯标量
-    #     if arr.size == 1:
-    #         return np.full((N, 1), arr.item(), dtype=float)
-    #     # 如果是一维，且正好长度 N
-    #     if arr.ndim == 1 and arr.shape[0] == N:
-    #         return arr.reshape(N, 1)
-    #     # 如果是 (1, N)
-    #     if arr.ndim == 2 and arr.shape == (1, N):
-    #         return arr.reshape(N, 1)
-    #     # 如果是 (N, 1)
-    #     if arr.ndim == 2 and arr.shape == (N, 1):
-    #         return arr
-    #     raise ValueError(f"{name} 的形状 {arr.shape} 无法广播到 (N,1) " f"(N={N})")
-
-    # c_ro1 = to_col(ro1, "ro1")
-    # c_beta1 = to_col(beta1, "beta1")
-    # c_ro2 = to_col(ro2, "ro2")
-    # c_beta2 = to_col(beta2, "beta2")
-    # c_ro3 = to_col(ro3, "ro3")
-    # c_beta3 = to_col(beta3, "beta3")
-
     # ———— 5) 横向拼接
     features = np.concatenate(
         [
-            # c_ro1,  # (N,1)
-            # c_beta1,  # (N,1)
-            # c_ro2,  # (N,1)
-            # c_beta2,  # (N,1)
-            # c_ro3,  # (N,1)
-            # c_beta3,  # (N,1)
             w,  # (N, w_dim)
             doppler,  # (N, d_dim)
         ],
