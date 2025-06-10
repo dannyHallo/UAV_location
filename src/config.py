@@ -11,12 +11,8 @@ train_seed = 42
 test_seed = 66
 visualize_seed = 66
 
-# step_count_per_line = 5
-# length_per_step = 0.2
-
 epoch = 300
-train_batch_size = 1024
-# test_batch_size = test_set_num
+batch_size = 1024
 
 learning_rate = 2e-4
 
