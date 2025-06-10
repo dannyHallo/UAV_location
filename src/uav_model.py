@@ -8,8 +8,7 @@ from src.kan import KAN
 class KANModel(nn.Module):
     def __init__(self):
         super(KANModel, self).__init__()
-        # 假设输入是 6 维，输出是 2 维，hidden layers 依然根据原模型的架构
-        self.model = KAN(width=[12, 10, 8, 6, 4], grid=300, k=3, seed=42)
+        self.model = KAN(width=[6, 10, 3], grid=300, k=3, seed=42)
 
     def forward(self, x):
         return self.model(x)
@@ -170,8 +169,8 @@ class TransformerModule(nn.Module):
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        # self.kan = KANModel()
-        self.dnn1 = DnnModule1()
+        self.kan = KANModel()
+        # self.dnn1 = DnnModule1()
         # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
         # self.lstm = LSTMModule(input_dim=6, output_dim=2,
         #                        hidden_dim=128, num_layers=2, dropout_rate=0.2)
@@ -184,8 +183,8 @@ class UavModel(nn.Module):
         # reshape input to discard x temporarily for the first module
         # x = x.view(-1, features_len)
 
-        # x = self.kan(x)
-        x = self.dnn1(x)
+        x = self.kan(x)
+        # x = self.dnn1(x)
 
         # x = x.view(seq_len,batch_size,2)
         # x = self.transformer(x)
