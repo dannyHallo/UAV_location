@@ -1,9 +1,8 @@
 import torch
 import os
-import multiprocessing
 import time
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+
 import src.trajectory_generator as trajectory_generator
 from src.trajectory_dataset import TrajectoryDataset
 from src.w_and_doppler_generator import extract_coords_from_lines
@@ -22,6 +21,10 @@ def construct_dataset(
     doppler_info,
     seed,
 ):
+    """
+    Constructs the feature and label dataset for a single detecting region.
+    This function remains unchanged from the original version.
+    """
     lines_a, lines_b = trajectory_generator.generate_lines(
         detecting_region_info=detecting_region_info,
         num_lines=lines_to_generate_per_region,
@@ -50,7 +53,6 @@ def construct_dataset(
         detecting_region_info=detecting_region_info, coords_b=coords_b
     )
 
-    # 生成特征和标签
     features = features_and_labels_generator.get_features(
         phis1234=phis_1234,
         w=w,
@@ -64,6 +66,10 @@ def construct_dataset(
 
 
 def _process_one_region(args):
+    """
+    A helper function to unpack arguments and call construct_dataset.
+    This helps keep the main loop in get_trajectory_dataset clean.
+    """
     (
         idx,
         detecting_region_info,
@@ -71,7 +77,7 @@ def _process_one_region(args):
         doppler_info,
         base_seed,
     ) = args
-    # 每个 region 用不同 seed
+    # Each region uses a different seed for variety in data generation.
     seed = base_seed + idx
     trajectory_dataset = construct_dataset(
         detecting_region_info, lines_to_generate_per_region, doppler_info, seed
@@ -84,41 +90,49 @@ def get_trajectory_dataset(
     lines_to_generate_per_region,
     doppler_info,
     seed,
-    num_workers=None,
 ):
     """
-    并行生成 stage_1 的 features 和 labels。
-    num_workers=None 时自动取 cpu_count()-1。
+    Generates the stage_1 features and labels sequentially (single-threaded).
+    The ProcessPoolExecutor has been replaced with a standard for-loop.
     """
-    if num_workers is None:
-        cpu_cnt = multiprocessing.cpu_count() or 1
-        num_workers = max(1, cpu_cnt - 1)
-
     detecting_region_infos = generate_detecting_region_infos(detecting_region_nums)
     tasks = [
         (idx, info, lines_to_generate_per_region, doppler_info, seed)
         for idx, info in enumerate(detecting_region_infos)
     ]
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        results = list(executor.map(_process_one_region, tasks))
+    results = []
+    # Loop through each task sequentially instead of using a process pool.
+    for task in tasks:
+        result = _process_one_region(task)
+        results.append(result)
 
+    # Unzip the results from each region's dataset generation.
     features_list, labels_list, extra_info_list = zip(*results)
+
+    # Concatenate the results from all regions into single numpy arrays.
     features = np.concatenate(features_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
     extra_infos = np.concatenate(extra_info_list, axis=0)
+
     trajectory_dataset = TrajectoryDataset(features, labels, extra_infos)
 
     return trajectory_dataset
 
 
 def load_dataset(path) -> TrajectoryDataset:
+    """
+    Loads a TrajectoryDataset from the specified path.
+    """
     dataset = torch.load(path)
     print(f"从 {path} 加载了数据集，包含 {len(dataset)} 个样本")
     return dataset
 
 
 def _save_dataset(path, trajectory_dataset):
+    """
+    Saves a TrajectoryDataset to the specified path.
+    """
     torch.save(trajectory_dataset, path)
     print(f"数据集已保存至: {path}")
 
@@ -128,8 +142,11 @@ def _load_or_generate_trajectory_dataset(
     detecting_region_nums,
     lines_to_generate_per_region,
     seed=42,
-    num_workers=None,
 ) -> TrajectoryDataset:
+    """
+    Loads a dataset from a cache file if it exists, otherwise generates it.
+    The num_workers parameter has been removed.
+    """
     if os.path.exists(save_path):
         print(f"→ 找到缓存文件，开始加载：'{save_path}'")
         trajectory_dataset = load_dataset(save_path)
@@ -144,21 +161,15 @@ def _load_or_generate_trajectory_dataset(
             lines_to_generate_per_region=lines_to_generate_per_region,
             doppler_info=dop_info,
             seed=seed,
-            num_workers=num_workers,
         )
         _save_dataset(save_path, trajectory_dataset)
         return trajectory_dataset
 
 
-def _get_best_worker_count() -> tuple[int, int]:
-    """
-    Returns: (num_workers, cpu_count)
-    """
-    cpu_cnt = multiprocessing.cpu_count() or 1
-    return max(1, cpu_cnt - 1), cpu_cnt
-
-
 def main():
+    """
+    Main execution function.
+    """
     os.makedirs("cache", exist_ok=True)
 
     presets = [
@@ -184,15 +195,13 @@ def main():
         print(f"检查缓存路径：{path}")
 
         start = time.time()
-        num_workers, cpu_cnt = _get_best_worker_count()
-        print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
+        print("以单线程模式运行")
 
         _load_or_generate_trajectory_dataset(
             save_path=path,
             detecting_region_nums=region_nums,
             lines_to_generate_per_region=lines_per_region,
             seed=seed,
-            num_workers=num_workers,
         )
         print(f"耗时：{time.time() - start:.2f} 秒")
 
