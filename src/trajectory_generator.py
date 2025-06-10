@@ -160,30 +160,53 @@ class TrajectoryGenerator:
         return self.last_velocity_direction
 
 
-def generate_lines(detecting_region_info, num_lines=10, time_interval=0.5, seed=42):
-    """生成指定数量的线对
-    
-    Args:
-        detecting_region_info: 检测区域信息
-        num_lines: 生成的轨迹条数
-        time_interval: 轨迹采样时间间隔，单位为秒
-        seed: 随机种子
-    
-    Returns:
-        tuple: (lines_a, lines_b)，两个list，每个list中包含多条轨迹
-        轨迹是相邻时间点的位置坐标
+def generate_trajectories_in_region(detecting_region_info, num_trajectories, seed, inner_scale_factor=0.7):
     """
-    random.seed(seed)
-    np.random.seed(seed)
+    Generates a list of Trajectory objects within a scaled inner region.
+
+    Args:
+        detecting_region_info: The object containing the outer boundary info.
+        num_trajectories: The number of trajectories to generate.
+        seed: The base random seed for reproducibility.
+        inner_scale_factor: Factor to scale the inner generation area.
+
+    Returns:
+        A tuple containing:
+        - list: A list of generated TrajectoryGenerator objects.
+        - list: The vertices of the outer boundary.
+        - list: The vertices of the inner generation boundary.
+    """
+    outer_vertices = _get_quad_vertices_from_detecting_region_info(detecting_region_info)
+    generation_boundary = _get_inner_quad_vertices(outer_vertices, inner_scale_factor)
     
-    # 生成轨迹
-    trajectories = _generate_multiple_trajectories(num_lines, detecting_region_info)
+    # Use the seed-incrementing generator
+    trajectories = _generate_multiple_trajectories(num_trajectories, generation_boundary, seed)
     
-    # 初始化存储所有轨迹的列表
+    return trajectories, outer_vertices, generation_boundary
+
+
+def _get_inner_quad_vertices(quad_vertices, scale_factor):
+    """
+    Calculates the vertices of an inner quadrilateral, scaled towards the centroid.
+    """
+    centroid = np.mean(quad_vertices, axis=0)
+    inner_vertices = [centroid + (vertex - centroid) * scale_factor for vertex in quad_vertices]
+    return inner_vertices
+
+
+def generate_lines(detecting_region_info, num_lines=10, time_interval=0.5, seed=42, inner_scale_factor=0.7):
+    """
+    Generates pairs of lines (trajectories) within a scaled-down inner region.
+    This function remains for other parts of the project that may depend on it.
+    """
+    # This now uses the same underlying logic as the visualizer
+    trajectories, _, _ = generate_trajectories_in_region(
+        detecting_region_info, num_lines, seed, inner_scale_factor
+    )
+    
     all_lines_a = []
     all_lines_b = []
     
-    # 为每条轨迹生成对应的线对
     for trajectory in trajectories:
         line_a, line_b = _generate_lines_from_trajectory(trajectory, time_interval)
         if len(line_a) > 0:
@@ -192,44 +215,28 @@ def generate_lines(detecting_region_info, num_lines=10, time_interval=0.5, seed=
     
     return all_lines_a, all_lines_b
 
+
 def part_lines(step_count_per_line, long_lines):
     """
     将多条长线分别划分成短线段
-    
-    参数:
-        step_count_per_line (int): 每条短线段包含的点数
-        long_lines (list): 包含多条长线的列表，每条长线是一个形状为(n, 2)的numpy数组
-    
-    返回:
-        list: 包含所有短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
     """
     all_short_lines = []
-    
-    # 处理每条长线
     for long_line in long_lines:
-        # 调用part_line函数将当前长线划分成短线段
         short_lines = _part_line(step_count_per_line, long_line)
-        
-        # 将当前长线生成的短线段添加到总列表中
         all_short_lines.extend(short_lines)
-    
     return all_short_lines
 
 
 def _get_quad_vertices_from_detecting_region_info(
     info: DetectingRegionInfo
 ) -> List[np.ndarray]:
-    """从一个 DetectingRegionInfo 对象中提取四边形的 4 个顶点坐标（v1,v2,v3,v4）"""
-    # 如果你需要按画图时的顺序（v1,v2,v4,v3），可把下面 v3、v4 对换：
+    """从一个 DetectingRegionInfo 对象中提取四边形的 4 个顶点坐标"""
     return [
-        info.transmittor_position,   # v1
-        info.receiver_position_1,    # v2
-        info.receiver_position_2,    # v3
-        info.receiver_position_3,    # v4
+        info.transmittor_position,
+        info.receiver_position_1,
+        info.receiver_position_2,
+        info.receiver_position_3,
     ]
-
-
-
 
 
 def _is_point_inside_quadrilateral(point, quad_vertices):
@@ -237,7 +244,6 @@ def _is_point_inside_quadrilateral(point, quad_vertices):
     x, y = point
     n = len(quad_vertices)
     inside = False
-
     p1x, p1y = quad_vertices[0]
     for i in range(n + 1):
         p2x, p2y = quad_vertices[i % n]
@@ -247,27 +253,21 @@ def _is_point_inside_quadrilateral(point, quad_vertices):
                 if p1x == p2x or x <= xinters:
                     inside = not inside
         p1x, p1y = p2x, p2y
-
     return inside
+
 
 def _is_bezier_curve_inside_quadrilateral(p0, p1, p2, p3, quad_vertices, num_checks=20):
     """检查三次贝塞尔曲线是否在四边形内"""
     for i in range(num_checks + 1):
         t = i / num_checks
-        b0 = (1-t)**3
-        b1 = 3*(1-t)**2*t
-        b2 = 3*(1-t)*t**2
-        b3 = t**3
-
-        point = [
-            b0 * p0[0] + b1 * p1[0] + b2 * p2[0] + b3 * p3[0],
-            b0 * p0[1] + b1 * p1[1] + b2 * p2[1] + b3 * p3[1]
-        ]
-
-        if not _is_point_inside_quadrilateral(point, quad_vertices):
+        point = (1-t)**3 * np.array(p0) + \
+                3*(1-t)**2*t * np.array(p1) + \
+                3*(1-t)*t**2 * np.array(p2) + \
+                t**3 * np.array(p3)
+        if not _is_point_inside_quadrilateral(point.tolist(), quad_vertices):
             return False
-
     return True
+
 
 def _generate_random_point_inside_quadrilateral(quad_vertices):
     """在四边形内生成随机点"""
@@ -280,177 +280,125 @@ def _generate_random_point_inside_quadrilateral(quad_vertices):
         x = random.uniform(min_x, max_x)
         y = random.uniform(min_y, max_y)
         point = [x, y]
-
         if _is_point_inside_quadrilateral(point, quad_vertices):
             return point
+    return np.mean(quad_vertices, axis=0).tolist()
 
-    centroid = np.mean(quad_vertices, axis=0)
-    return centroid.tolist()
 
-def _generate_trajectory_with_abcd_in_quadrilateral(quad_vertices, max_tries=100):
-    """生成一条符合要求的轨迹，包含ABCD四个点，且BC之间为明显的曲线，确保速度方向连续"""
-    for attempt in range(max_tries):
+def _generate_trajectory_with_abcd_in_quadrilateral(boundary_vertices, max_tries=100):
+    """生成一条符合要求的轨迹"""
+    for _ in range(max_tries):
         velocity = random.uniform(15.0, 25.0)
         max_acceleration = random.uniform(20.0, 30.0)
-
         generator = TrajectoryGenerator(velocity=velocity, max_acceleration=max_acceleration)
-
-        points = []
-        for _ in range(4):
-            points.append(_generate_random_point_inside_quadrilateral(quad_vertices))
-
-        if not all(_is_point_inside_quadrilateral(p, quad_vertices) for p in points):
-            continue
+        points = [_generate_random_point_inside_quadrilateral(boundary_vertices) for _ in range(4)]
 
         ab_vector = np.array(points[1]) - np.array(points[0])
         cd_vector = np.array(points[3]) - np.array(points[2])
-
         if np.linalg.norm(ab_vector) < 5.0 or np.linalg.norm(cd_vector) < 5.0:
             continue
 
         ab_direction = ab_vector / np.linalg.norm(ab_vector)
         cd_direction = cd_vector / np.linalg.norm(cd_vector)
-
         bc_vector = np.array(points[2]) - np.array(points[1])
         if np.linalg.norm(bc_vector) < 10.0:
             continue
 
-        bc_direction = bc_vector / np.linalg.norm(bc_vector)
+        control_point_1 = np.array(points[1]) + ab_direction * (np.linalg.norm(bc_vector) * 0.5)
+        control_point_2 = np.array(points[2]) - cd_direction * (np.linalg.norm(bc_vector) * 0.5)
 
-        control_distance_1 = np.linalg.norm(bc_vector) * 0.5
-        control_point_1 = np.array(points[1]) + ab_direction * control_distance_1
-
-        control_distance_2 = np.linalg.norm(bc_vector) * 0.5
-        control_point_2 = np.array(points[2]) - cd_direction * control_distance_2
-
-        if not _is_point_inside_quadrilateral(control_point_1.tolist(), quad_vertices) or \
-           not _is_point_inside_quadrilateral(control_point_2.tolist(), quad_vertices) or \
+        if not _is_point_inside_quadrilateral(control_point_1.tolist(), boundary_vertices) or \
+           not _is_point_inside_quadrilateral(control_point_2.tolist(), boundary_vertices) or \
            not _is_bezier_curve_inside_quadrilateral(points[1], control_point_1.tolist(),
-                                                 control_point_2.tolist(), points[2], quad_vertices):
+                                                 control_point_2.tolist(), points[2], boundary_vertices):
             continue
 
         try:
-            b_velocity_direction = generator._add_straight_line(points[0], points[1], 
-                                                             np.linalg.norm(ab_vector) / velocity)
-            
-            c_velocity_direction = generator._add_curved_transition(points[1], points[2], 
-                                                                b_velocity_direction, cd_direction)
-            
+            b_vel_dir = generator._add_straight_line(points[0], points[1], np.linalg.norm(ab_vector) / velocity)
+            generator._add_curved_transition(points[1], points[2], b_vel_dir, cd_direction)
             generator._add_straight_line(points[2], points[3], np.linalg.norm(cd_vector) / velocity)
-            
             return generator
-        except Exception as e:
+        except Exception:
             continue
-
     return None
 
-def _generate_multiple_trajectories(num_trajectories, detecting_region_info):
-    """生成多条轨迹"""
-    # 提取四边形顶点
-    quad_vertices = _get_quad_vertices_from_detecting_region_info(detecting_region_info)
-    
+
+def _generate_multiple_trajectories(num_trajectories, generation_boundary, base_seed):
+    """生成多条轨迹, 每次生成使用递增的种子"""
     trajectories = []
-    
     for i in range(num_trajectories):
-        trajectory = _generate_trajectory_with_abcd_in_quadrilateral(quad_vertices)
+        current_seed = base_seed + i
+        random.seed(current_seed)
+        np.random.seed(current_seed)
+        
+        trajectory = _generate_trajectory_with_abcd_in_quadrilateral(generation_boundary)
         if trajectory:
-            trajectory.name = f"轨迹{i+1}"
+            trajectory.name = f"Trajectory {i+1}"
             trajectories.append(trajectory)
-    
     return trajectories
+
 
 def _sample_trajectory_at_time_interval(trajectory, time_interval):
     """按固定时间间隔采样轨迹点，使用线性插值保证点位置准确"""
+    if not trajectory.trajectory:
+        return np.array([])
+        
     trajectory_points = np.array(trajectory.trajectory)
     timestamps = np.array(trajectory.timestamps)
     
+    if not timestamps.any():
+        return np.array([])
+        
     total_time = timestamps[-1]
     
-    # 计算采样时间点
     sample_times = np.arange(0, total_time, time_interval)
-    if sample_times[-1] < total_time:
+    if not sample_times.size or sample_times[-1] < total_time:
         sample_times = np.append(sample_times, total_time)
     
     sampled_points = []
     
-    # 对每个采样时间点，计算插值位置
     for t in sample_times:
-        # 如果采样时间恰好是轨迹中的时间点
-        if t in timestamps:
-            idx = np.where(timestamps == t)[0][0]
-            sampled_points.append(trajectory_points[idx])
-            continue
-            
-        # 找到采样时间点所在的时间区间
+        # Find the interval t is in
         next_idx = np.searchsorted(timestamps, t)
+        
         if next_idx == 0:
-            # 采样时间小于第一个时间点
+            # Before the first timestamp
             sampled_points.append(trajectory_points[0])
         elif next_idx == len(timestamps):
-            # 采样时间大于最后一个时间点
+            # After the last timestamp
             sampled_points.append(trajectory_points[-1])
         else:
-            # 在两个时间点之间插值
+            # Between two timestamps, perform linear interpolation
             prev_idx = next_idx - 1
             prev_time = timestamps[prev_idx]
             next_time = timestamps[next_idx]
+            
+            # Handle the case where t is exactly on a timestamp
+            if next_time == prev_time:
+                 alpha = 0
+            else:
+                 alpha = (t - prev_time) / (next_time - prev_time)
+
             prev_point = trajectory_points[prev_idx]
             next_point = trajectory_points[next_idx]
             
-            # 线性插值计算位置
-            alpha = (t - prev_time) / (next_time - prev_time)
             interpolated_point = prev_point * (1 - alpha) + next_point * alpha
             sampled_points.append(interpolated_point)
     
     return np.array(sampled_points)
 
+
 def _generate_lines_from_trajectory(trajectory_generator, time_interval):
-    """从轨迹生成器按时间间隔t生成相邻点的line_a和line_b
-    
-    生成格式:
-    line_a: 第1到第n-1个点
-    line_b: 第2到第n个点
-    
-    返回:
-    两个numpy数组，对应相邻时间点的位置
-    """
-    # 按时间间隔采样轨迹
+    """从轨迹生成器按时间间隔t生成相邻点的line_a和line_b"""
     sampled_points = _sample_trajectory_at_time_interval(trajectory_generator, time_interval)
-    
     if len(sampled_points) < 2:
         return np.array([]), np.array([])
-    
-    # line_a是第1到第n-1个点
-    line_a = sampled_points[:-1]
-    
-    # line_b是第2到第n个点
-    line_b = sampled_points[1:]
-    
-    return line_a, line_b
+    return sampled_points[:-1], sampled_points[1:]
+
 
 def _part_line(step_count_per_line, long_line):
-    """
-    将一条长线分成多条短线段
-    
-    参数:
-        step_count_per_line (int): 每条短线段包含的点数
-        long_line (numpy.ndarray): 长线上所有点的坐标，形状为(n, 2)，其中n是点的数量
-    
-    返回:
-        list: 包含多条短线段的列表，每条短线段是一个numpy数组，形状为(step_count_per_line, 2)
-    """
+    """将一条长线分成多条短线段"""
     if len(long_line) < step_count_per_line:
-        # 如果长线上的点数少于所需的步数，则直接跳出
         return []
-    
-    # 计算可以生成的短线段数量
     num_lines = len(long_line) - step_count_per_line + 1
-    
-    # 生成短线段
-    short_lines = []
-    for i in range(num_lines):
-        # 提取当前短线段包含的点
-        short_line = long_line[i:i+step_count_per_line]
-        short_lines.append(short_line)
-    
-    return short_lines
+    return [long_line[i:i+step_count_per_line] for i in range(num_lines)]

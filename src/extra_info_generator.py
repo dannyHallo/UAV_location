@@ -10,7 +10,6 @@ def _get_distance(ref, coord_a):
 # extra里面有 三个距离和相对位置 d21,d31,d41,（ρ1，θ1），（ρ2，θ2），（ρ3，θ3）
 def get_extra_infos(detecting_region_info: DetectingRegionInfo, coords_a):
     # use a placeholder instead with 9 zeros to reduce cost
-    print("Warning: get_extra_infos is returning zeros instead.")
     return np.zeros((len(coords_a), 9))
 
     # ro1, beta1 = detecting_region_info.get_ro_beta_t_r1()

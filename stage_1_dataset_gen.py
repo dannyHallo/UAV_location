@@ -1,210 +1,223 @@
-import torch
 import os
 import time
+import torch
 import numpy as np
+from tqdm import tqdm
+from multiprocessing import Pool, cpu_count
 
-import src.trajectory_generator as trajectory_generator
-from src.trajectory_dataset import TrajectoryDataset
-from src.w_and_doppler_generator import extract_coords_from_lines
-import src.get_phi_info as get_phi_info
-import src.w_and_doppler_generator as w_and_doppler_generator
-import src.features_and_labels_generator as features_and_labels_generator
-from src.detecting_region_info_generator import generate_detecting_region_infos
-from src.extra_info_generator import get_extra_infos
+# --- Project-specific imports ---
 import src.config as config
+from src.trajectory_dataset import TrajectoryDataset
+from src.detecting_region_info_generator import generate_detecting_region_infos
 import src.doppler_info as doppler_info_module
+from src.trajectory_generator import generate_lines
+from src.features_and_labels_generator import (
+    get_features,
+    get_labels,
+    _extract_coords_from_lines,
+)
+from src.get_phi_info import get_angle_phi
+from src.w_and_doppler_generator import generate_w_and_doppler
+from src.extra_info_generator import get_extra_infos
 
 
 def construct_dataset(
-    detecting_region_info,
-    lines_to_generate_per_region,
-    doppler_info,
-    seed,
+    detecting_region_info, num_of_lines_to_generate, doppler_info, seed
 ):
     """
-    Constructs the feature and label dataset for a single detecting region.
-    This function remains unchanged from the original version.
+    Constructs a dataset for a single detecting region.
+    This function contains the core logic that will be executed by each worker.
     """
-    lines_a, lines_b = trajectory_generator.generate_lines(
-        detecting_region_info=detecting_region_info,
-        num_lines=lines_to_generate_per_region,
+    # 1. Generate trajectories (lines) for the given region
+    lines_a, lines_b = generate_lines(
+        detecting_region_info,
+        num_lines=num_of_lines_to_generate,
         time_interval=config.time_interval,
         seed=seed,
     )
 
-    coords_a = extract_coords_from_lines(lines_a)
-    coords_b = extract_coords_from_lines(lines_b)
+    if not lines_a:
+        return None, None, None
 
-    phis_1234 = []
-    for ca, cb in zip(coords_a, coords_b):
-        phi1, phi2, phi3, phi4 = get_phi_info.get_angle_phi(
-            detecting_region_info, ca, cb
-        )
-        phis_1234.append([phi1, phi2, phi3, phi4])
+    # 2. Extract individual coordinates from the trajectories
+    coords_a = _extract_coords_from_lines(lines_a)
+    coords_b = _extract_coords_from_lines(lines_b)
 
-    w, doppler = w_and_doppler_generator.generate_w_and_doppler(
-        detecting_region_info=detecting_region_info,
-        doppler_info=doppler_info,
-        coords_a=coords_a,
-        coords_b=coords_b,
-        phis_1234=phis_1234,
-    )
-    labels = features_and_labels_generator.get_labels(
-        detecting_region_info=detecting_region_info, coords_b=coords_b
+    if coords_a.shape[0] == 0:
+        return None, None, None
+
+    # 3. Calculate phi angles for each coordinate pair
+    phis1234 = np.array(
+        [
+            get_angle_phi(detecting_region_info, ca, cb)
+            for ca, cb in zip(coords_a, coords_b)
+        ]
     )
 
-    features = features_and_labels_generator.get_features(
-        phis1234=phis_1234,
-        w=w,
-        doppler=doppler,
+    # 4. Generate w and doppler values
+    w, doppler = generate_w_and_doppler(
+        detecting_region_info, doppler_info, coords_a, coords_b, phis1234
     )
 
-    extra_infos = get_extra_infos(
-        detecting_region_info=detecting_region_info, coords_a=coords_b
-    )
+    # 5. Assemble final features and labels
+    features = get_features(phis1234, w, doppler)
+    labels = get_labels(detecting_region_info, coords_b)
+    extra_infos = get_extra_infos(detecting_region_info, coords_a)
+
     return features, labels, extra_infos
 
 
-def _process_one_region(args):
+def construct_dataset_worker(args):
     """
-    A helper function to unpack arguments and call construct_dataset.
-    This helps keep the main loop in get_trajectory_dataset clean.
+    A wrapper function for the multiprocessing Pool. It unpacks arguments
+    and calls the main dataset construction logic.
     """
-    (
-        idx,
-        detecting_region_info,
-        lines_to_generate_per_region,
-        doppler_info,
-        base_seed,
-    ) = args
-    # Each region uses a different seed for variety in data generation.
-    seed = base_seed + idx
-    trajectory_dataset = construct_dataset(
-        detecting_region_info, lines_to_generate_per_region, doppler_info, seed
-    )
-    return trajectory_dataset
+    num_lines, seed, detecting_region_info, doppler_info = args
+    try:
+        return construct_dataset(detecting_region_info, num_lines, doppler_info, seed)
+    except Exception as e:
+        print(f"Error in worker process with seed {seed}: {e}")
+        return None, None, None
 
 
-def get_trajectory_dataset(
-    detecting_region_nums,
-    lines_to_generate_per_region,
-    doppler_info,
-    seed,
+def construct_dataset_parallel(
+    detecting_region_info, num_total_lines, doppler_info, base_seed
 ):
     """
-    Generates the stage_1 features and labels sequentially (single-threaded).
-    The ProcessPoolExecutor has been replaced with a standard for-loop.
+    Generates a dataset in parallel by distributing the line generation
+    across multiple CPU cores.
     """
-    detecting_region_infos = generate_detecting_region_infos(detecting_region_nums)
+    # Determine the number of worker processes, leaving one core free.
+    num_workers = max(1, cpu_count() - 1)
+    print(f"Using {num_workers} worker processes (multi-threaded)...")
+
+    # Divide the total number of lines among the workers
+    lines_per_worker = [num_total_lines // num_workers] * num_workers
+    for i in range(num_total_lines % num_workers):
+        lines_per_worker[i] += 1
+
+    # Generate a unique seed for each worker
+    seeds = [base_seed + i for i in range(num_workers)]
     tasks = [
-        (idx, info, lines_to_generate_per_region, doppler_info, seed)
-        for idx, info in enumerate(detecting_region_infos)
+        (lines, seed, detecting_region_info, doppler_info)
+        for lines, seed in zip(lines_per_worker, seeds)
     ]
 
-    results = []
-    # Loop through each task sequentially instead of using a process pool.
-    for task in tasks:
-        result = _process_one_region(task)
-        results.append(result)
+    all_features, all_labels, all_extra_infos = [], [], []
 
-    # Unzip the results from each region's dataset generation.
-    features_list, labels_list, extra_info_list = zip(*results)
-
-    # Concatenate the results from all regions into single numpy arrays.
-    features = np.concatenate(features_list, axis=0)
-    labels = np.concatenate(labels_list, axis=0)
-    extra_infos = np.concatenate(extra_info_list, axis=0)
-
-    trajectory_dataset = TrajectoryDataset(features, labels, extra_infos)
-
-    return trajectory_dataset
-
-
-def load_dataset(path) -> TrajectoryDataset:
-    """
-    Loads a TrajectoryDataset from the specified path.
-    """
-    dataset = torch.load(path)
-    print(f"从 {path} 加载了数据集，包含 {len(dataset)} 个样本")
-    return dataset
-
-
-def _save_dataset(path, trajectory_dataset):
-    """
-    Saves a TrajectoryDataset to the specified path.
-    """
-    torch.save(trajectory_dataset, path)
-    print(f"数据集已保存至: {path}")
-
-
-def _load_or_generate_trajectory_dataset(
-    save_path,
-    detecting_region_nums,
-    lines_to_generate_per_region,
-    seed=42,
-) -> TrajectoryDataset:
-    """
-    Loads a dataset from a cache file if it exists, otherwise generates it.
-    The num_workers parameter has been removed.
-    """
-    if os.path.exists(save_path):
-        print(f"→ 找到缓存文件，开始加载：'{save_path}'")
-        trajectory_dataset = load_dataset(save_path)
-        return trajectory_dataset
-    else:
-        print(f"→ 缓存文件不存在，开始生成：'{save_path}'")
-        dop_info = doppler_info_module.DopplerInfo(
-            config.c, config.fc, config.time_interval
+    with Pool(processes=num_workers) as pool:
+        results = list(
+            tqdm(
+                pool.imap(construct_dataset_worker, tasks),
+                total=len(tasks),
+                desc=f"Generating {num_total_lines} lines in parallel",
+            )
         )
-        trajectory_dataset = get_trajectory_dataset(
-            detecting_region_nums=detecting_region_nums,
-            lines_to_generate_per_region=lines_to_generate_per_region,
-            doppler_info=dop_info,
-            seed=seed,
-        )
-        _save_dataset(save_path, trajectory_dataset)
-        return trajectory_dataset
+
+    for features, labels, extra_infos in results:
+        if features is not None and len(features) > 0:
+            all_features.append(features)
+            all_labels.append(labels)
+            all_extra_infos.append(extra_infos)
+
+    if not all_features:
+        return np.array([]), np.array([]), np.array([])
+
+    final_features = np.concatenate(all_features, axis=0)
+    final_labels = np.concatenate(all_labels, axis=0)
+    final_extra_infos = np.concatenate(all_extra_infos, axis=0)
+
+    return final_features, final_labels, final_extra_infos
 
 
-def main():
+def generate_and_save_dataset(dataset_path, num_regions, lines_per_region, base_seed):
     """
-    Main execution function.
+    Main function to orchestrate the generation and saving of a dataset
+    using parallel processing.
     """
-    os.makedirs("cache", exist_ok=True)
+    if os.path.exists(dataset_path):
+        print(f"Dataset already exists at {dataset_path}. Skipping generation.")
+        return
 
-    presets = [
-        (
-            "训练集",
-            config.stage_1_train_set_path,
-            config.train_detecting_region_nums,
-            config.train_num_of_lines_to_generate_per_region,
-            config.train_seed,
-        ),
-        (
-            "测试集",
-            config.stage_1_test_set_path,
-            config.test_detecting_region_nums,
-            config.test_num_of_lines_to_generate_per_region,
-            config.test_seed,
-        ),
-    ]
+    print(f"\n--- Generating dataset for: {os.path.basename(dataset_path)} ---")
+    start_time = time.time()
 
-    print("========== stage_1 数据集 生成/加载 ==========")
-    for name, path, region_nums, lines_per_region, seed in presets:
-        print(f"\n--- 处理{name} ---")
-        print(f"检查缓存路径：{path}")
+    doppler_info = doppler_info_module.DopplerInfo(
+        config.c, config.fc, config.time_interval
+    )
+    detecting_region_infos = generate_detecting_region_infos(
+        num_configurations=num_regions, seed=base_seed
+    )
 
-        start = time.time()
-        print("以单线程模式运行")
+    full_features, full_labels, full_extra_infos = [], [], []
 
-        _load_or_generate_trajectory_dataset(
-            save_path=path,
-            detecting_region_nums=region_nums,
-            lines_to_generate_per_region=lines_per_region,
-            seed=seed,
+    for i, region_info in enumerate(detecting_region_infos):
+        print(f"Processing region {i+1}/{num_regions}...")
+        region_line_seed = base_seed + num_regions + i
+
+        # Directly call the parallel constructor
+        features, labels, extra_infos = construct_dataset_parallel(
+            region_info, lines_per_region, doppler_info, region_line_seed
         )
-        print(f"耗时：{time.time() - start:.2f} 秒")
+
+        if len(features) > 0:
+            full_features.append(features)
+            full_labels.append(labels)
+            full_extra_infos.append(extra_infos)
+
+    if not full_features:
+        print("Warning: No data was generated.")
+        return
+
+    final_features = np.concatenate(full_features, axis=0)
+    final_labels = np.concatenate(full_labels, axis=0)
+    final_extra_infos = np.concatenate(full_extra_infos, axis=0)
+
+    dataset = TrajectoryDataset(final_features, final_labels, final_extra_infos)
+    os.makedirs(os.path.dirname(dataset_path), exist_ok=True)
+    torch.save(dataset, dataset_path)
+
+    end_time = time.time()
+    print(f"Successfully generated and saved dataset to {dataset_path}")
+    print(f"Total generated data points: {len(final_features)}")
+    print(f"Total time taken: {end_time - start_time:.2f} seconds")
+
+
+def load_dataset(path):
+    """Loads a dataset from the specified path."""
+    print(f"Loading dataset from {path}...")
+    # FIX: Explicitly set weights_only=False to silence the FutureWarning.
+    # This is safe because we are loading a trusted file that we generated ourselves,
+    # and we need to load the full TrajectoryDataset object, not just tensors.
+    return torch.load(path, weights_only=False)
 
 
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("Starting Parallel Dataset Generation")
+    print("=" * 60)
+
+    # Ensure the 'dataset' directory exists
+    os.makedirs("dataset", exist_ok=True)
+
+    # Define paths for the 'dataset' folder
+    train_set_path = "dataset/stage_1_train.pt"
+    test_set_path = "dataset/stage_1_test.pt"
+
+    # Generate the training dataset
+    generate_and_save_dataset(
+        dataset_path=train_set_path,
+        num_regions=config.train_detecting_region_nums,
+        lines_per_region=config.train_num_of_lines_to_generate_per_region,
+        base_seed=config.train_seed,
+    )
+
+    # Generate the testing dataset
+    generate_and_save_dataset(
+        dataset_path=test_set_path,
+        num_regions=config.test_detecting_region_nums,
+        lines_per_region=config.test_num_of_lines_to_generate_per_region,
+        base_seed=config.test_seed,
+    )
+
+    print("\nAll datasets generated.")

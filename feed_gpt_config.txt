@@ -3,7 +3,6 @@
 # Lines starting with '#' are ignored.
 
 src/config.py
-src/cal.py
 src/uav_model.py
 src/loss_func.py
 src/coord_dataset.py

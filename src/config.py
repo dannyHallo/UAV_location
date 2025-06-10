@@ -1,8 +1,8 @@
-stage_1_train_set_path = "cache/stage_1_train.pt"
-stage_1_test_set_path = "cache/stage_1_test.pt"
+stage_1_train_set_path = "dataset/stage_1_train.pt"
+stage_1_test_set_path = "dataset/stage_1_test.pt"
 
 time_interval = 0.01
-train_num_of_lines_to_generate_per_region = 80
+train_num_of_lines_to_generate_per_region = 800
 test_num_of_lines_to_generate_per_region = 10
 train_detecting_region_nums = 1
 test_detecting_region_nums = 1
@@ -12,7 +12,7 @@ test_seed = 66
 visualize_seed = 66
 
 epoch = 300
-batch_size = 1024
+batch_size = 2048
 
 learning_rate = 2e-4
 
