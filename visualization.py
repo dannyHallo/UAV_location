@@ -5,6 +5,8 @@ import sys
 import os
 import numpy as np
 
+import src.config as config
+
 # suppress the FutureWarning about torch.load untrusted models
 warnings.filterwarnings(
     "ignore",
@@ -71,7 +73,7 @@ class App(tk.Tk):
         tk.Label(gen_control_frame, text="Seed:", font=("Helvetica", 10)).pack(
             side=tk.LEFT, padx=(0, 5)
         )
-        self.seed_var = tk.StringVar(value="42")
+        self.seed_var = tk.StringVar(value=config.test_line_seed)
         self.seed_entry = tk.Entry(
             gen_control_frame, textvariable=self.seed_var, width=8
         )
@@ -168,7 +170,7 @@ class App(tk.Tk):
         self.true_labels = None
 
         # 1. Generate the base detecting region
-        region_infos = generate_detecting_region_infos(num_configurations=1, seed=seed)
+        region_infos = generate_detecting_region_infos(num_configurations=1, seed=config.region_seed)
         if not region_infos:
             messagebox.showwarning(
                 "Generation Failed", f"Could not generate a valid region for seed {seed}."
@@ -181,7 +183,7 @@ class App(tk.Tk):
             generate_trajectories_in_region(
                 self.detecting_region_info,
                 num_lines,
-                seed=seed + 1,
+                seed=seed,
                 inner_scale_factor=0.7,
             )
         )
