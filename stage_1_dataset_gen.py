@@ -43,7 +43,7 @@ def construct_dataset(
         phis_1234.append([phi1, phi2, phi3, phi4])
 
     # 计算 w 和 doppler
-    w, doppler = w_and_doppler_generator.generateWAndDoppler(
+    w, doppler = w_and_doppler_generator.generate_w_and_doppler(
         detecting_region_info=detecting_region_info,
         doppler_info=doppler_info,
         coords_a=coords_a,
@@ -84,9 +84,6 @@ def _process_one_region(args):
     return trajectory_dataset
 
 
-# -------------------------------------------------------------------
-# 2) 并行版的主函数
-# -------------------------------------------------------------------
 def get_trajectory_dataset(
     detecting_region_nums,
     lines_to_generate_per_region,
@@ -135,21 +132,18 @@ def load_trajectory_dataset(path) -> TrajectoryDataset:
 
 
 def load_or_generate_trajectory_dataset(
-    data_file,
+    save_path,
     detecting_region_nums,
     lines_to_generate_per_region,
     seed=42,
     num_workers=None,
 ) -> TrajectoryDataset:
-    """
-    如果 data_file 存在就加载，否则运行生成流程并保存
-    """
-    if os.path.exists(data_file):
-        print(f"→ 找到缓存文件，开始加载：'{data_file}'")
-        trajectory_dataset = load_trajectory_dataset(data_file)
+    if os.path.exists(save_path):
+        print(f"→ 找到缓存文件，开始加载：'{save_path}'")
+        trajectory_dataset = load_trajectory_dataset(save_path)
         return trajectory_dataset
     else:
-        print(f"→ 缓存文件不存在，开始生成：'{data_file}'")
+        print(f"→ 缓存文件不存在，开始生成：'{save_path}'")
         dop_info = doppler_info_module.DopplerInfo(
             config.c, config.fc, config.time_interval
         )
@@ -160,22 +154,19 @@ def load_or_generate_trajectory_dataset(
             seed=seed,
             num_workers=num_workers,
         )
-        save_dataset(data_file, trajectory_dataset)
+        save_dataset(save_path, trajectory_dataset)
         return trajectory_dataset
 
 
-def get_best_worker_count():
+def get_best_worker_count() -> tuple[int, int]:
     """
-    自动选择最佳进程数：cpu_count() - 1
+    Returns: (num_workers, cpu_count)
     """
     cpu_cnt = multiprocessing.cpu_count() or 1
     return max(1, cpu_cnt - 1), cpu_cnt
 
 
-# -------------------------------------------------------------------
-# 4) 脚本主入口
-# -------------------------------------------------------------------
-if __name__ == "__main__":
+def main():
     os.makedirs("cache", exist_ok=True)
 
     presets = [
@@ -204,11 +195,15 @@ if __name__ == "__main__":
         num_workers, cpu_cnt = get_best_worker_count()
         print(f"检测到 {cpu_cnt} 核心，使用 {num_workers} 个进程并行")
 
-        trajectory_dataset = load_or_generate_trajectory_dataset(
-            data_file=path,
+        load_or_generate_trajectory_dataset(
+            save_path=path,
             detecting_region_nums=region_nums,
             lines_to_generate_per_region=lines_per_region,
             seed=seed,
             num_workers=num_workers,
         )
         print(f"耗时：{time.time() - start:.2f} 秒")
+
+
+if __name__ == "__main__":
+    main()

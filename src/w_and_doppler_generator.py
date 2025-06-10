@@ -4,40 +4,8 @@ import src.detecting_region_info as detecting_region_info
 import src.doppler_info as doppler_info
 import src.get_phi_info as get_phi_info
 
-# def calculate_angles_phi(array_A, array_B, origin):
-#     # Function to calculate the angle between vectors OA and AB for each pair of points
-#     angles = []
-#     for A, B in zip(array_A, array_B):
-#         vector_OA = A - origin
-#         vector_AB = B - A
-#         dot_product = np.dot(vector_OA, vector_AB)
-#         norm_OA = np.linalg.norm(vector_OA)
-#         norm_AB = np.linalg.norm(vector_AB)
-#         # Avoid division by zero in case one of the vectors is zero
-#         if norm_OA == 0 or norm_AB == 0:
-#             angle = 0
-#         else:
-#             # Clip the cosine value to avoid numerical errors beyond the range [-1, 1]
-#             cos_angle = dot_product / (norm_OA * norm_AB)
-#             cos_angle_clipped = np.clip(cos_angle, -1.0, 1.0)
-#             angle = np.arccos(cos_angle_clipped)
-#         angles.append(angle)
-#     return angles
 
-
-# def get_angle_phi(detecting_region_info, coords_A, coords_B):
-#     # Call the function and pass the arrays
-#     phi1 = calculate_angles_phi(coords_A, coords_B, detecting_region_info.v1)
-#     phi2 = calculate_angles_phi(coords_A, coords_B, detecting_region_info.v2)
-#     phi3 = calculate_angles_phi(coords_A, coords_B, detecting_region_info.v3)
-#     phi4 = calculate_angles_phi(coords_A, coords_B, detecting_region_info.v4)
-
-#     return [phi1, phi2, phi3, phi4]
-
-
-import numpy as np
-
-def calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
+def _calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
     """
     计算瞬时速度大小 v = |coord_b - coord_a| / Δt
 
@@ -56,7 +24,9 @@ def calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
 
     # 形状检查
     if coord_a.shape != coord_b.shape:
-        raise ValueError(f"coord_a{coord_a.shape} 与 coord_b{coord_b.shape} 必须形状一致")
+        raise ValueError(
+            f"coord_a{coord_a.shape} 与 coord_b{coord_b.shape} 必须形状一致"
+        )
 
     # 计算位移
     disp = coord_b - coord_a
@@ -82,7 +52,7 @@ def calculate_distance(x, y, a, b):
 
 
 # 定义计算夹角的函数，以计算与x轴的夹角
-def calculate_angle_with_x_axis(x, y, a, b):
+def _calculate_angle_with_x_axis(x, y, a, b):
     # 向量p1p2
     vector = np.array([a - x, b - y])
     # x轴正方向的向量
@@ -115,31 +85,31 @@ def calculate_angle_with_x_axis(x, y, a, b):
 
 
 # 继续使用之前定义的点和距离计算方法
-def get_angle_theta(detecting_region_info, coord_a, coord_b):
+def _get_angle_theta(detecting_region_info, coord_a, coord_b):
 
     # 计算夹角
-    n_theta_1a = calculate_angle_with_x_axis(
+    n_theta_1a = _calculate_angle_with_x_axis(
         detecting_region_info.v1[0], detecting_region_info.v1[1], coord_a[0], coord_a[1]
     )
-    n_theta_1b = calculate_angle_with_x_axis(
+    n_theta_1b = _calculate_angle_with_x_axis(
         detecting_region_info.v1[0], detecting_region_info.v1[1], coord_b[0], coord_b[1]
     )
-    n_theta_2a = calculate_angle_with_x_axis(
+    n_theta_2a = _calculate_angle_with_x_axis(
         detecting_region_info.v2[0], detecting_region_info.v2[1], coord_a[0], coord_a[1]
     )
-    n_theta_2b = calculate_angle_with_x_axis(
+    n_theta_2b = _calculate_angle_with_x_axis(
         detecting_region_info.v2[0], detecting_region_info.v2[1], coord_b[0], coord_b[1]
     )
-    n_theta_3a = calculate_angle_with_x_axis(
+    n_theta_3a = _calculate_angle_with_x_axis(
         detecting_region_info.v3[0], detecting_region_info.v3[1], coord_a[0], coord_a[1]
     )
-    n_theta_3b = calculate_angle_with_x_axis(
+    n_theta_3b = _calculate_angle_with_x_axis(
         detecting_region_info.v3[0], detecting_region_info.v3[1], coord_b[0], coord_b[1]
     )
-    n_theta_4a = calculate_angle_with_x_axis(
+    n_theta_4a = _calculate_angle_with_x_axis(
         detecting_region_info.v4[0], detecting_region_info.v4[1], coord_a[0], coord_a[1]
     )
-    n_theta_4b = calculate_angle_with_x_axis(
+    n_theta_4b = _calculate_angle_with_x_axis(
         detecting_region_info.v4[0], detecting_region_info.v4[1], coord_b[0], coord_b[1]
     )
 
@@ -171,17 +141,16 @@ def extract_coords_from_lines(lines):
     return np.array(coords)
 
 
-def generateWAndDoppler(
+def generate_w_and_doppler(
     detecting_region_info: detecting_region_info,
     doppler_info: doppler_info,
     coords_a,
     coords_b,
-    phis_1234
+    phis_1234,
 ):
     """
     lines 输入格式: 见 NewLinesGenerator.py
     """
-
 
     data_length = np.shape(coords_a)[0]
     w = np.zeros([data_length, 3])
@@ -193,12 +162,12 @@ def generateWAndDoppler(
         coord_b = coords_b[i]
 
         [phi1, phi2, phi3, phi4] = phis_1234[i]
-        [theta1, theta2, theta3, theta4] = get_angle_theta(
+        [theta1, theta2, theta3, theta4] = _get_angle_theta(
             detecting_region_info, coord_a, coord_b
         )
 
         # 预先计算速度大小
-        speeds = calculate_instantaneous_speeds(
+        speeds = _calculate_instantaneous_speeds(
             coord_a, coord_b, doppler_info.time_interval
         )
 
@@ -260,24 +229,9 @@ def generateWAndDoppler(
         )
 
         # 使用第i个速度值
-        v12 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi2))
-            / doppler_info.c
-        )
-        v13 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi3))
-            / doppler_info.c
-        )
-        v14 = (
-            speeds
-            * doppler_info.fc
-            * (np.cos(phi1) + np.cos(phi4))
-            / doppler_info.c
-        )
+        v12 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi2)) / doppler_info.c
+        v13 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi3)) / doppler_info.c
+        v14 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi4)) / doppler_info.c
 
         w[i][0] = w12
         w[i][1] = w13
