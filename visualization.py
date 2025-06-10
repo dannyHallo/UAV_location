@@ -1,8 +1,15 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import warnings
 import sys
 import os
 import numpy as np
+
+# suppress the FutureWarning about torch.load untrusted models
+warnings.filterwarnings(
+    "ignore",
+    message=".*You are using torch.load with weights_only=False.*",
+)
 
 # Ensure the 'src' directory is in the Python path to import modules correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
@@ -53,6 +60,9 @@ class App(tk.Tk):
         self.device = None
         self.predictions = None
         self.true_labels = None
+
+        # status bar variable
+        self.status_var = tk.StringVar(value="Welcome.")
 
         # --- Top frame for generation controls ---
         gen_control_frame = tk.Frame(self)
@@ -123,6 +133,11 @@ class App(tk.Tk):
             model_frame, textvariable=self.model_path_var, font=("Helvetica", 9)
         ).pack(side=tk.LEFT, padx=(10, 0))
 
+        # --- Status bar at the bottom ---
+        status_frame = tk.Frame(self, relief=tk.SUNKEN, bd=1)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Label(status_frame, textvariable=self.status_var, anchor="w").pack(fill=tk.X)
+
         # --- Main frame for the Matplotlib plot ---
         plot_frame = tk.Frame(self, borderwidth=2, relief=tk.SUNKEN)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -188,7 +203,7 @@ class App(tk.Tk):
     def load_model(self):
         """Opens a dialog to load a PyTorch model state dictionary."""
         if not TORCH_AVAILABLE:
-            messagebox.showerror("Action Disabled", IMPORT_ERROR_MSG)
+            self.status_var.set("⚠️ Cannot load model: PyTorch not installed.")
             return
 
         filepath = filedialog.askopenfilename(
@@ -202,19 +217,27 @@ class App(tk.Tk):
         try:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model = UavModel().to(self.device)
-            model.load_state_dict(torch.load(filepath, map_location=self.device))
+            # safe‐load weights only, to reduce untrusted‐pickle attack surface
+            try:
+                checkpoint = torch.load(
+                    filepath, map_location=self.device, weights_only=True
+                )
+            except TypeError:
+                # older torch versions don’t support weights_only
+                checkpoint = torch.load(filepath, map_location=self.device)
+            model.load_state_dict(checkpoint)
             model.eval()
 
             self.model = model
             self.model_path_var.set(f"Loaded: {os.path.basename(filepath)}")
             self.predict_button.config(state=tk.NORMAL)
-            messagebox.showinfo("Success", f"Model loaded successfully to {self.device}.")
+            self.status_var.set(f"✅ Model loaded on {self.device}")
         except Exception as e:
             self.model = None
             self.device = None
             self.model_path_var.set("Failed to load model.")
             self.predict_button.config(state=tk.DISABLED)
-            messagebox.showerror("Model Load Error", f"An error occurred: {e}")
+            self.status_var.set(f"❌ Model load error: {e}")
 
     def on_trajectory_select(self, event=None):
         """Callback to visualize the newly selected trajectory and clear old predictions."""
@@ -225,14 +248,12 @@ class App(tk.Tk):
     def run_prediction(self):
         """Prepares data for the selected trajectory and runs the loaded model."""
         if not self.model:
-            messagebox.showwarning("No Model", "Please load a model first.")
+            self.status_var.set("⚠️ Please load a model first.")
             return
 
         selected_index = self.trajectory_selector.current()
         if selected_index == -1:
-            messagebox.showwarning(
-                "No Trajectory", "Please generate and select a trajectory."
-            )
+            self.status_var.set("⚠️ Please generate and select a trajectory.")
             return
 
         selected_trajectory = self.trajectories[selected_index]
@@ -243,9 +264,7 @@ class App(tk.Tk):
         )
 
         if features is None:
-            messagebox.showinfo(
-                "Info", "The selected trajectory is too short to make predictions."
-            )
+            self.status_var.set("ℹ️ Trajectory too short, no prediction.")
             self.predictions = None
             self.true_labels = None
         else:
@@ -258,11 +277,9 @@ class App(tk.Tk):
 
                 self.predictions = outputs.cpu().numpy()
                 self.true_labels = labels
-                messagebox.showinfo(
-                    "Success", f"Prediction complete for {selected_trajectory.name}."
-                )
+                self.status_var.set(f"✅ Prediction complete for {selected_trajectory.name}")
             except Exception as e:
-                messagebox.showerror("Prediction Error", f"An error occurred: {e}")
+                self.status_var.set(f"❌ Prediction error: {e}")
                 self.predictions = None
                 self.true_labels = None
 
