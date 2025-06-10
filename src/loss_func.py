@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-# sin 和 cos之间的约束 平方相加等于1
-
 
 class CartesianTestLoss(nn.Module):
     """
@@ -51,7 +49,7 @@ class CartesianTestLoss(nn.Module):
         trig_loss = torch.mean((sum_of_squares - 1.0) ** 2)
         return trig_loss
 
-    def compute_cartesian_error(self, outputs, targets):
+    def _compute_cartesian_error(self, outputs, targets):
         """
         计算笛卡尔坐标系中的欧几里得误差
         将极坐标输出转换为笛卡尔坐标后计算误差
@@ -80,18 +78,6 @@ class CartesianTestLoss(nn.Module):
         return torch.mean(euclidean_distances)
 
     def forward(self, outputs, targets):
-        """
-        计算损失，支持训练和测试两种模式
-
-        参数:
-        - outputs: 模型输出 [batch_size, 3] (ρ, sin(θ), cos(θ))
-        - targets: 目标值 [batch_size, 3] (ρ, sin(θ), cos(θ))
-
-        返回:
-        - 训练模式: 总MSE损失
-        - 评估模式: 笛卡尔坐标系中的欧几里得距离均值
-        """
-        # 提取各个维度
         distance_outputs = outputs[:, 0]  # ρ_pred
         sin_outputs = outputs[:, 1]  # sin(θ)_pred``
         cos_outputs = outputs[:, 2]  # cos(θ)_pred
@@ -100,11 +86,8 @@ class CartesianTestLoss(nn.Module):
         sin_targets = targets[:, 1]  # sin(θ)_real
         cos_targets = targets[:, 2]  # cos(θ)_real
 
-        # 评估模式：返回笛卡尔坐标系中的欧几里得误差
-        if not self.training:
-            return self.compute_cartesian_error(outputs, targets)
-
-        # 训练模式：计算MSE损失
+        # if not self.training:
+        #     return self._compute_cartesian_error(outputs, targets)
 
         # 归一化距离（如果启用）
         norm_distance_outputs = self.normalize_dist(distance_outputs)

@@ -5,7 +5,6 @@ import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 
-# --- Project-specific imports ---
 import src.config as config
 from src.trajectory_dataset import TrajectoryDataset
 from src.detecting_region_info_generator import generate_detecting_region_infos
@@ -130,7 +129,9 @@ def construct_dataset_parallel(
     return final_features, final_labels, final_extra_infos
 
 
-def generate_and_save_dataset(dataset_path, num_regions, lines_per_region, base_seed):
+def generate_and_save_dataset(
+    dataset_path, num_regions, lines_per_region, region_seed, line_seed
+):
     """
     Main function to orchestrate the generation and saving of a dataset
     using parallel processing.
@@ -146,18 +147,18 @@ def generate_and_save_dataset(dataset_path, num_regions, lines_per_region, base_
         config.c, config.fc, config.time_interval
     )
     detecting_region_infos = generate_detecting_region_infos(
-        num_configurations=num_regions, seed=base_seed
+        num_configurations=num_regions, seed=region_seed
     )
 
     full_features, full_labels, full_extra_infos = [], [], []
 
     for i, region_info in enumerate(detecting_region_infos):
         print(f"Processing region {i+1}/{num_regions}...")
-        region_line_seed = base_seed + num_regions + i
+        line_seed = line_seed + num_regions + i
 
         # Directly call the parallel constructor
         features, labels, extra_infos = construct_dataset_parallel(
-            region_info, lines_per_region, doppler_info, region_line_seed
+            region_info, lines_per_region, doppler_info, line_seed
         )
 
         if len(features) > 0:
@@ -209,7 +210,8 @@ if __name__ == "__main__":
         dataset_path=train_set_path,
         num_regions=config.train_detecting_region_nums,
         lines_per_region=config.train_num_of_lines_to_generate_per_region,
-        base_seed=config.train_seed,
+        region_seed=config.region_seed,
+        line_seed=config.train_line_seed,
     )
 
     # Generate the testing dataset
@@ -217,7 +219,8 @@ if __name__ == "__main__":
         dataset_path=test_set_path,
         num_regions=config.test_detecting_region_nums,
         lines_per_region=config.test_num_of_lines_to_generate_per_region,
-        base_seed=config.test_seed,
+        region_seed=config.region_seed,
+        line_seed=config.test_line_seed,
     )
 
     print("\nAll datasets generated.")

@@ -14,82 +14,75 @@ class KANModel(nn.Module):
         return self.model(x)
 
 
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class SpatialLocator(nn.Module):
     def __init__(self, input_dim=6, output_dim=3):
         super(SpatialLocator, self).__init__()
-        
+
         # 增强特征提取模块
         self.feature_extractor = nn.Sequential(
             nn.Linear(input_dim, 128),
             nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1),
-            
             nn.Linear(128, 256),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1),
-            
             nn.Linear(256, 512),
             nn.BatchNorm1d(512),
-            nn.LeakyReLU(0.1)
+            nn.LeakyReLU(0.1),
         )
-        
+
         # 空间注意力机制
         self.spatial_attention = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 512),
-            nn.Sigmoid()
+            nn.Linear(512, 256), nn.ReLU(), nn.Linear(256, 512), nn.Sigmoid()
         )
-        
+
         # 残差连接
-        self.residual = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.BatchNorm1d(512)
-        ) if input_dim != 512 else nn.Identity()
-        
+        self.residual = (
+            nn.Sequential(nn.Linear(input_dim, 512), nn.BatchNorm1d(512))
+            if input_dim != 512
+            else nn.Identity()
+        )
+
         # 输出回归模块
         self.regressor = nn.Sequential(
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1),
-            
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1),
-            
-            nn.Linear(128, output_dim)
+            nn.Linear(128, output_dim),
         )
-        
+
         # 初始化权重
         self._init_weights()
 
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='leaky_relu')
+                nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-    
+
     def forward(self, x):
         # 特征提取
         features = self.feature_extractor(x)
-        
+
         # 空间注意力
         attention_weights = self.spatial_attention(features)
         attended_features = features * attention_weights
-        
+
         # 残差连接
         residual = self.residual(x)
         combined = attended_features + residual
-        
+
         # 回归输出
         return self.regressor(combined)
-
 
 
 class DnnModule1(nn.Module):
@@ -169,8 +162,8 @@ class TransformerModule(nn.Module):
 class UavModel(nn.Module):
     def __init__(self):
         super(UavModel, self).__init__()
-        self.kan = KANModel()
-        # self.dnn1 = DnnModule1()
+        # self.kan = KANModel()
+        self.dnn1 = DnnModule1()
         # self.transformer = TransformerModule(input_dim=2,output_dim=2,d_model=128,nhead=8,num_layers=2,dropout_rate=0.2)
         # self.lstm = LSTMModule(input_dim=6, output_dim=2,
         #                        hidden_dim=128, num_layers=2, dropout_rate=0.2)
@@ -183,15 +176,15 @@ class UavModel(nn.Module):
         # reshape input to discard x temporarily for the first module
         # x = x.view(-1, features_len)
 
-        x = self.kan(x)
-        # x = self.dnn1(x)
+        # x = self.kan(x)
+        x = self.dnn1(x)
 
         # x = x.view(seq_len,batch_size,2)
         # x = self.transformer(x)
         # print(x.shape)
 
         # reshape x to original shape (restoring seq)
-        # x = x.view(batch_size, seq_len, 6) 
+        # x = x.view(batch_size, seq_len, 6)
         # x = self.lstm(x)
 
         # lstm already returns the last hidden state of the sequences, no need to reshape
