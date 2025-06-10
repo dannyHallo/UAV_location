@@ -17,9 +17,6 @@ import src.config as config
 import src.doppler_info as doppler_info_module
 
 
-# -------------------------------------------------------------------
-# 1) 对单个 detecting_region_info 的处理函数
-# -------------------------------------------------------------------
 def construct_dataset(
     detecting_region_info,
     lines_to_generate_per_region,
@@ -29,20 +26,19 @@ def construct_dataset(
     # 生成两条轨迹
     lines_a, lines_b = trajectory_generator.generate_lines(
         detecting_region_info=detecting_region_info,
-        time_interval=config.time_interval,
         num_lines=lines_to_generate_per_region,
+        time_interval=config.time_interval,
         seed=seed,
     )
 
-    # 提取坐标
     coords_a = extract_coords_from_lines(lines_a)
     coords_b = extract_coords_from_lines(lines_b)
 
     # 计算 phi1..4
     phis_1234 = []
-    for ca, cb in zip(coords_a, coords_b):
+    for coord_a, coord_b in zip(coords_a, coords_b):
         phi1, phi2, phi3, phi4 = get_phi_info.get_angle_phi(
-            detecting_region_info, ca, cb
+            detecting_region_info, coord_a, coord_b
         )
         phis_1234.append([phi1, phi2, phi3, phi4])
 

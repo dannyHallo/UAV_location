@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.optimize import least_squares
+from src.detecting_region_info import DetectingRegionInfo
 
 
-def get_d_cs_phi(detecting_region_info, coord_a):
+def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_a):
     ref = detecting_region_info.transmittor_position
     phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
     # change range from -pi to pi to 0 to 2pi
@@ -12,10 +13,10 @@ def get_d_cs_phi(detecting_region_info, coord_a):
     return [d, np.sin(phi), np.cos(phi)]
 
 
-def get_labels(detecting_region_info, coords_a):
+def get_labels(detecting_region_info: DetectingRegionInfo, coords_a):
     labels = []
     for coord_a in coords_a:
-        labels.append(get_d_cs_phi(detecting_region_info, coord_a))
+        labels.append(_get_d_sin_cos_phi(detecting_region_info, coord_a))
     return np.array(labels)
 
 
@@ -54,15 +55,11 @@ def generate_features_and_labels(
     return [reshaped_features, reshaped_labels]
 
 
-# 合起来训，即一次训练出四个φ
-import numpy as np
-
-
 def get_features(
-    phis1234,  # (N,4) 或可转成 (N,4) 的 list
-    w,  # (N,), (N,w_dim), (w_dim,N) 或 list
-    doppler,  # (N,), (N,d_dim), (d_dim,N) 或 list
-    detecting_region_info,
+    phis1234,
+    w,
+    doppler,
+    detecting_region_info: DetectingRegionInfo,
 ):
     """
     返回：
@@ -169,6 +166,7 @@ def calculate_distances(train_label, detecting_region_info):
     return distances
 
 
+# MARK: unused
 # estimate_positions_optimized 函数：
 # 输入：距离表和检测区域信息。
 # 方法：
@@ -177,9 +175,7 @@ def calculate_distances(train_label, detecting_region_info):
 # 初始猜测采用接收器1的位置，可以根据需要调整。
 # 如果优化成功，则使用优化结果作为估计位置；否则，使用接收器1的位置作为默认值。
 # 输出：预测的位置数组，形状为 (n, 2)。
-
-
-def estimate_positions_optimized(distance_table, detecting_region_info):
+def _estimate_positions_optimized(distance_table, detecting_region_info):
     """
     反向计算函数，使用非线性最小二乘法根据到三个接收器的距离估计 (x, y) 位置。
 
