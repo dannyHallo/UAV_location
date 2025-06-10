@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# stage_1_dataset_gen.py
 import torch
 import os
 import multiprocessing
@@ -72,10 +70,9 @@ def construct_dataset(
         detecting_region_info=detecting_region_info, coords_a=coords_a
     )
     return features, labels, extra_infos
-    
 
 
-def _process_one_region(args) :
+def _process_one_region(args):
     (
         idx,
         detecting_region_info,
@@ -122,7 +119,7 @@ def get_trajectory_dataset(
     features = np.concatenate(features_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
     extra_infos = np.concatenate(extra_info_list, axis=0)
-    trajectory_dataset = TrajectoryDataset(features, labels,extra_infos)
+    trajectory_dataset = TrajectoryDataset(features, labels, extra_infos)
 
     return trajectory_dataset
 

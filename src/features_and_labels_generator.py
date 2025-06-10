@@ -20,14 +20,6 @@ def get_labels(detecting_region_info, coords_a):
     return np.array(labels)
 
 
-def _get_labels(detecting_region_info, lines_a):
-    labels = []
-    for line in lines_a:
-        for coord_a in line:
-            labels.append(get_d_cs_phi(detecting_region_info, coord_a))
-    return np.array(labels)
-
-
 def _extract_coords_from_lines(lines):
     """
     Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
