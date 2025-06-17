@@ -1,18 +1,19 @@
 stage_1_dataset_path = "dataset/stage_1_dataset.pt"
 
-train_split_ratio = 0.9
+train_split_ratio = 0.85
 
 time_interval = 0.01
 
 num_detecting_regions = 1
+visualize_num_detecting_regions = 1
 num_lines_to_generate_per_region = 20000
 
-region_seed = 42  # the only region we are using
-train_test_split_seed = 77
 line_seed = 42
-
-visualize_num_detecting_regions = 1
 visualize_line_seed = 0
+
+region_seed = 42  # the only region we are using
+
+train_test_split_seed = 77
 
 #  TRAINING HYPER-PARAMETERS
 epoch = 500
