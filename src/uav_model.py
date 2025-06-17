@@ -1,8 +1,7 @@
-# 定义更深的神经网络模型
+import torch.nn as nn
+from src.kan import KAN
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
-from src.kan import KAN
 
 
 class KANModel(nn.Module):
@@ -12,10 +11,6 @@ class KANModel(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-
-
-import torch
-import torch.nn as nn
 
 
 class SpatialLocator(nn.Module):
