@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 
 
 class CartesianTestLoss(nn.Module):
@@ -37,25 +36,25 @@ class CartesianTestLoss(nn.Module):
     def normalize_dist(self, distance_pred, distance_target):
         """
         使用当前batch的最大值进行距离归一化
-        
+
         Args:
             distance_pred: 预测的距离值
             distance_target: 真实的距离值
-            
+
         Returns:
             归一化后的预测值和真实值，范围在[0,1]
         """
         if not self.normalize_distance:
             return distance_pred, distance_target
-        
+
         # 合并预测值和真实值以计算全局最大值
         combined_distances = torch.cat([distance_pred, distance_target])
         max_distance = torch.max(combined_distances) + self.epsilon
-        
+
         # 使用最大值进行归一化
         norm_pred = distance_pred / max_distance
         norm_target = distance_target / max_distance
-        
+
         return norm_pred, norm_target
 
     def trig_identity_loss(self, sin_values, cos_values):
@@ -132,10 +131,7 @@ class CartesianTestLoss(nn.Module):
 # 使用示例
 def create_loss_function():
     """创建使用batch最大值归一化的损失函数"""
-    return CartesianTestLoss(
-        normalize_distance=True,
-        trig_constraint_weight=0.5
-    )
+    return CartesianTestLoss(normalize_distance=True, trig_constraint_weight=0.5)
 
 
 # 测试函数
@@ -146,21 +142,25 @@ def test_max_normalization():
     outputs = torch.randn(batch_size, 3)
     outputs[:, 0] = torch.abs(outputs[:, 0]) * 100 + 10  # 距离值: [10, 110]
     targets = torch.randn(batch_size, 3)
-    targets[:, 0] = torch.abs(targets[:, 0]) * 80 + 20   # 距离值: [20, 100]
-    
+    targets[:, 0] = torch.abs(targets[:, 0]) * 80 + 20  # 距离值: [20, 100]
+
     loss_fn = create_loss_function()
-    
+
     # 获取归一化前的距离
     dist_pred = outputs[:, 0]
     dist_target = targets[:, 0]
     print(f"归一化前 - 预测距离范围: [{dist_pred.min():.2f}, {dist_pred.max():.2f}]")
-    print(f"归一化前 - 真实距离范围: [{dist_target.min():.2f}, {dist_target.max():.2f}]")
-    
+    print(
+        f"归一化前 - 真实距离范围: [{dist_target.min():.2f}, {dist_target.max():.2f}]"
+    )
+
     # 手动测试归一化
     norm_pred, norm_target = loss_fn.normalize_dist(dist_pred, dist_target)
     print(f"归一化后 - 预测距离范围: [{norm_pred.min():.3f}, {norm_pred.max():.3f}]")
-    print(f"归一化后 - 真实距离范围: [{norm_target.min():.3f}, {norm_target.max():.3f}]")
-    
+    print(
+        f"归一化后 - 真实距离范围: [{norm_target.min():.3f}, {norm_target.max():.3f}]"
+    )
+
     # 计算损失
     loss = loss_fn(outputs, targets)
     print(f"总损失: {loss.item():.6f}")

@@ -1,12 +1,11 @@
 stage_1_dataset_path = "dataset/stage_1_dataset.pt"
 
-# a simple split ratio that the notebook can reuse
 train_split_ratio = 0.9
 
 time_interval = 0.01
 
 num_detecting_regions = 1
-num_lines_to_generate_per_region = 500
+num_lines_to_generate_per_region = 20000
 
 region_seed = 42  # the only region we are using
 train_test_split_seed = 77
@@ -15,17 +14,13 @@ line_seed = 42
 visualize_num_detecting_regions = 1
 visualize_line_seed = 0
 
-# -------------------------------
 #  TRAINING HYPER-PARAMETERS
-# -------------------------------
 epoch = 500
-batch_size = 1024
+batch_size = 4096
 learning_rate = 2e-4
 optimizer = "Adam"  # ["LBFGS" | "Adam"]
 
-# -------------------------------
 #  CONSTANTS FOR DOPPLER / W
-# -------------------------------
 fc = 6e9
 c = 3e8
 v = 30
