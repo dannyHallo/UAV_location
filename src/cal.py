@@ -5,7 +5,7 @@ from matplotlib.animation import FuncAnimation
 
 
 class TrajectoryGenerator:
-    def __init__(self, velocity=20.0, max_acceleration=25.0, name=None):
+    def __init__(self, velocity=30.0, max_acceleration=25.0, name=None):
         """初始化轨迹生成器"""
         self.velocity = velocity
         self.max_acceleration = max_acceleration
@@ -153,6 +153,7 @@ class TrajectoryGenerator:
             self.velocities.append(velocities[i])
             self.accelerations.append(accelerations[i])
 
+        # 返回曲线结束时的切线方向
         self.last_velocity_direction = velocities[-1] / self.velocity if velocities else end_direction
 
         self.time += duration
@@ -231,41 +232,37 @@ def generate_random_point_inside_quadrilateral(quad_vertices):
     return centroid.tolist()
 
 
-def generate_trajectory_with_ABCD_in_quadrilateral(quad_vertices, max_tries=100):
-    """生成一条符合要求的轨迹，包含ABCD四个点，且BC之间为明显的曲线，确保速度方向连续"""
+def generate_trajectory_with_ABC_in_quadrilateral(quad_vertices, max_tries=100):
+    """生成一条符合要求的轨迹，包含ABC三个点，其中AB为直线，BC为曲线，C点后沿切线方向继续直线运动"""
     for attempt in range(max_tries):
         velocity = random.uniform(15.0, 25.0)
         max_acceleration = random.uniform(20.0, 30.0)
 
         generator = TrajectoryGenerator(velocity=velocity, max_acceleration=max_acceleration)
 
+        # 只生成ABC三个点，D点将根据C点的切线方向计算
         points = []
-        for _ in range(4):
+        for _ in range(3):
             points.append(generate_random_point_inside_quadrilateral(quad_vertices))
 
         if not all(is_point_inside_quadrilateral(p, quad_vertices) for p in points):
             continue
 
         ab_vector = np.array(points[1]) - np.array(points[0])
-        cd_vector = np.array(points[3]) - np.array(points[2])
+        bc_vector = np.array(points[2]) - np.array(points[1])
 
-        if np.linalg.norm(ab_vector) < 5.0 or np.linalg.norm(cd_vector) < 5.0:
+        if np.linalg.norm(ab_vector) < 5.0 or np.linalg.norm(bc_vector) < 10.0:
             continue
 
         ab_direction = ab_vector / np.linalg.norm(ab_vector)
-        cd_direction = cd_vector / np.linalg.norm(cd_vector)
-
-        bc_vector = np.array(points[2]) - np.array(points[1])
-        if np.linalg.norm(bc_vector) < 10.0:
-            continue
-
         bc_direction = bc_vector / np.linalg.norm(bc_vector)
 
+        # 检查控制点是否在四边形内
         control_distance_1 = np.linalg.norm(bc_vector) * 0.5
         control_point_1 = np.array(points[1]) + ab_direction * control_distance_1
 
         control_distance_2 = np.linalg.norm(bc_vector) * 0.5
-        control_point_2 = np.array(points[2]) - cd_direction * control_distance_2
+        control_point_2 = np.array(points[2]) - bc_direction * control_distance_2
 
         if not is_point_inside_quadrilateral(control_point_1.tolist(), quad_vertices) or \
            not is_point_inside_quadrilateral(control_point_2.tolist(), quad_vertices) or \
@@ -274,13 +271,32 @@ def generate_trajectory_with_ABCD_in_quadrilateral(quad_vertices, max_tries=100)
             continue
 
         try:
+            # AB直线段
             b_velocity_direction = generator.add_straight_line(points[0], points[1], 
                                                              np.linalg.norm(ab_vector) / velocity)
             
-            c_velocity_direction = generator.add_curved_transition(points[1], points[2], 
-                                                                b_velocity_direction, cd_direction)
+            # BC曲线段，获取C点的切线方向
+            c_tangent_direction = generator.add_curved_transition(points[1], points[2], 
+                                                                b_velocity_direction, bc_direction)
             
-            generator.add_straight_line(points[2], points[3], np.linalg.norm(cd_vector) / velocity)
+            # 根据C点的切线方向计算D点
+            # D点距离C点的距离可以是一个随机值或固定值
+            cd_distance = random.uniform(30.0, 80.0)  # 可以调整这个距离范围
+            point_d = np.array(points[2]) + c_tangent_direction * cd_distance
+            
+            # 检查D点是否在四边形内，如果不在，则缩短距离
+            for distance_scale in [1.0, 0.8, 0.6, 0.4, 0.2]:
+                temp_d = np.array(points[2]) + c_tangent_direction * (cd_distance * distance_scale)
+                if is_point_inside_quadrilateral(temp_d.tolist(), quad_vertices):
+                    point_d = temp_d
+                    cd_distance = cd_distance * distance_scale
+                    break
+            else:
+                # 如果都不在四边形内，跳过这次尝试
+                continue
+            
+            # CD直线段（沿着C点的切线方向）
+            generator.add_straight_line(points[2], point_d.tolist(), cd_distance / velocity)
             
             return generator
         except Exception as e:
@@ -298,7 +314,7 @@ def generate_multiple_trajectories(num_trajectories, detecting_region_info=None)
     trajectories = []
     
     for i in range(num_trajectories):
-        trajectory = generate_trajectory_with_ABCD_in_quadrilateral(quad_vertices)
+        trajectory = generate_trajectory_with_ABC_in_quadrilateral(quad_vertices)
         if trajectory:
             trajectory.name = f"轨迹{i+1}"
             trajectories.append(trajectory)
@@ -407,10 +423,23 @@ def visualize_trajectories(trajectories, quad_vertices):
         # 绘制关键点
         key_points = np.array(trajectory.key_points)
         plt.scatter(key_points[:, 0], key_points[:, 1], color=colors[i], s=100, marker='o')
+        
+        # 标注关键点
+        for j, point in enumerate(key_points):
+            if j == 0:
+                label = 'A'
+            elif j == 1:
+                label = 'B'
+            elif j == 2:
+                label = 'C'
+            else:
+                label = 'D'
+            plt.annotate(f'{label}', (point[0], point[1]), xytext=(5, 5), 
+                        textcoords='offset points', color=colors[i], fontsize=12, fontweight='bold')
     
     plt.xlabel('X坐标')
     plt.ylabel('Y坐标')
-    plt.title('轨迹可视化')
+    plt.title('单次拐弯轨迹可视化 (A→B直线 + B→C曲线 + C→D沿切线直线)')
     plt.legend()
     plt.grid(True)
     plt.axis('equal')
@@ -444,7 +473,7 @@ def visualize_sampled_points(lines_a, lines_b, quad_vertices):
     
     plt.xlabel('X')
     plt.ylabel('Y')
-    plt.title('Visulization of sampling points')
+    plt.title('单次拐弯轨迹采样点可视化')
     plt.legend()
     plt.grid(True)
     plt.axis('equal')
@@ -474,7 +503,7 @@ def animate_trajectories(trajectories, quad_vertices, interval=50):
     
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
-    ax.set_title('Generated Trajectory Animation')
+    ax.set_title('单次拐弯轨迹动画')
     ax.grid(True)
     
     # 为每条轨迹创建一个点对象
@@ -562,14 +591,14 @@ def main():
     quad_vertices = get_quad_vertices_from_detecting_region_info()
     
     # 生成轨迹
-    num_trajectories = 3
+    num_trajectories = 5
     trajectories = generate_multiple_trajectories(num_trajectories)
     
     # 可视化轨迹
     visualize_trajectories(trajectories, quad_vertices)
     
     # 按时间间隔采样轨迹
-    time_interval = 0.01  # 每0.3秒采样一次
+    time_interval = 0.1  # 每0.1秒采样一次
     lines_a, lines_b = generateLines(num_lines=num_trajectories, time_interval=time_interval)
     
     # 可视化采样点
