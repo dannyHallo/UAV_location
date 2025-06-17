@@ -232,7 +232,7 @@ def generate_random_point_inside_quadrilateral(quad_vertices):
     return centroid.tolist()
 
 
-def generate_trajectory_with_ABC_in_quadrilateral(quad_vertices, max_tries=100):
+def generate_trajectory_with_ABC_in_quadrilateral(boundary_vertices, max_tries=100):
     """生成一条符合要求的轨迹，包含ABC三个点，其中AB为直线，BC为曲线，C点后沿切线方向继续直线运动"""
     for attempt in range(max_tries):
         velocity = random.uniform(15.0, 25.0)
@@ -243,9 +243,9 @@ def generate_trajectory_with_ABC_in_quadrilateral(quad_vertices, max_tries=100):
         # 只生成ABC三个点，D点将根据C点的切线方向计算
         points = []
         for _ in range(3):
-            points.append(generate_random_point_inside_quadrilateral(quad_vertices))
+            points.append(generate_random_point_inside_quadrilateral(boundary_vertices))
 
-        if not all(is_point_inside_quadrilateral(p, quad_vertices) for p in points):
+        if not all(is_point_inside_quadrilateral(p, boundary_vertices) for p in points):
             continue
 
         ab_vector = np.array(points[1]) - np.array(points[0])
@@ -264,10 +264,10 @@ def generate_trajectory_with_ABC_in_quadrilateral(quad_vertices, max_tries=100):
         control_distance_2 = np.linalg.norm(bc_vector) * 0.5
         control_point_2 = np.array(points[2]) - bc_direction * control_distance_2
 
-        if not is_point_inside_quadrilateral(control_point_1.tolist(), quad_vertices) or \
-           not is_point_inside_quadrilateral(control_point_2.tolist(), quad_vertices) or \
+        if not is_point_inside_quadrilateral(control_point_1.tolist(), boundary_vertices) or \
+           not is_point_inside_quadrilateral(control_point_2.tolist(), boundary_vertices) or \
            not is_bezier_curve_inside_quadrilateral(points[1], control_point_1.tolist(),
-                                                 control_point_2.tolist(), points[2], quad_vertices):
+                                                 control_point_2.tolist(), points[2], boundary_vertices):
             continue
 
         try:
@@ -287,7 +287,7 @@ def generate_trajectory_with_ABC_in_quadrilateral(quad_vertices, max_tries=100):
             # 检查D点是否在四边形内，如果不在，则缩短距离
             for distance_scale in [1.0, 0.8, 0.6, 0.4, 0.2]:
                 temp_d = np.array(points[2]) + c_tangent_direction * (cd_distance * distance_scale)
-                if is_point_inside_quadrilateral(temp_d.tolist(), quad_vertices):
+                if is_point_inside_quadrilateral(temp_d.tolist(), boundary_vertices):
                     point_d = temp_d
                     cd_distance = cd_distance * distance_scale
                     break

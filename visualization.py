@@ -73,7 +73,7 @@ class App(tk.Tk):
         tk.Label(gen_control_frame, text="Seed:", font=("Helvetica", 10)).pack(
             side=tk.LEFT, padx=(0, 5)
         )
-        self.seed_var = tk.StringVar(value=config.test_line_seed)
+        self.seed_var = tk.StringVar(value=config.visualize_line_seed)
         self.seed_entry = tk.Entry(
             gen_control_frame, textvariable=self.seed_var, width=8
         )
