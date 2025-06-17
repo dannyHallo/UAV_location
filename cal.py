@@ -2,166 +2,9 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from src.trajectory_generator import TrajectoryGenerator
 
-
-class TrajectoryGenerator:
-    def __init__(self, velocity=30.0, max_acceleration=25.0, name=None):
-        """初始化轨迹生成器"""
-        self.velocity = velocity
-        self.max_acceleration = max_acceleration
-        self.name = name
-        self.trajectory = []
-        self.timestamps = []
-        self.velocities = []
-        self.accelerations = []
-        self.time = 0.0
-        self.key_points = []
-        self.key_times = []
-
-    def add_straight_line(self, start_point, end_point, duration):
-        """添加匀速直线段"""
-        start_point = np.array(start_point)
-        end_point = np.array(end_point)
-
-        if len(self.key_points) == 0:
-            self.key_points.append(start_point)
-            self.key_times.append(self.time)
-        self.key_points.append(end_point)
-        self.key_times.append(self.time + duration)
-
-        num_samples = max(int(duration * 10), 2)
-        times = np.linspace(0, duration, num_samples)
-
-        for t in times:
-            alpha = t / duration
-            position = (1 - alpha) * start_point + alpha * end_point
-            self.trajectory.append(position)
-            self.timestamps.append(self.time + t)
-
-        velocity_vector = (end_point - start_point) / duration
-        speed = np.linalg.norm(velocity_vector)
-        if speed > 0:
-            velocity_unit = velocity_vector / speed
-        else:
-            velocity_unit = np.array([1.0, 0.0])
-
-        self.last_velocity_direction = velocity_unit
-
-        for _ in range(num_samples):
-            self.velocities.append(velocity_unit * self.velocity)
-            self.accelerations.append(np.zeros(2))
-
-        self.time += duration
-        return velocity_unit
-
-    def add_curved_transition(self, start_point, end_point, start_direction, end_direction, control_point_offset_factor=0.7):
-        """添加确保速度连续性的平滑弯曲过渡"""
-        start_point = np.array(start_point)
-        end_point = np.array(end_point)
-        start_direction = np.array(start_direction)
-        end_direction = np.array(end_direction)
-
-        if np.allclose(start_point, end_point):
-            return None
-
-        if len(self.key_points) == 0:
-            self.key_points.append(start_point)
-            self.key_times.append(self.time)
-
-        if np.linalg.norm(start_direction) > 0:
-            start_direction = start_direction / np.linalg.norm(start_direction)
-        else:
-            start_direction = np.array([1.0, 0.0])
-
-        if np.linalg.norm(end_direction) > 0:
-            end_direction = end_direction / np.linalg.norm(end_direction)
-        else:
-            end_direction = np.array([1.0, 0.0])
-
-        direct_distance = np.linalg.norm(end_point - start_point)
-
-        control_distance_1 = direct_distance * control_point_offset_factor
-        control_point_1 = start_point + start_direction * control_distance_1
-
-        control_distance_2 = direct_distance * control_point_offset_factor
-        control_point_2 = end_point - end_direction * control_distance_2
-
-        curve_length = (np.linalg.norm(control_point_1 - start_point) +
-                        np.linalg.norm(control_point_2 - control_point_1) +
-                        np.linalg.norm(end_point - control_point_2))
-
-        duration = curve_length / self.velocity
-
-        self.key_points.append(end_point)
-        self.key_times.append(self.time + duration)
-
-        num_samples = max(int(duration * 30), 30)
-        t_values = np.linspace(0, 1, num_samples)
-
-        positions = []
-        velocities = []
-        accelerations = []
-
-        for t in t_values:
-            b0 = (1-t)**3
-            b1 = 3*(1-t)**2*t
-            b2 = 3*(1-t)*t**2
-            b3 = t**3
-
-            position = b0 * start_point + b1 * control_point_1 + b2 * control_point_2 + b3 * end_point
-            positions.append(position)
-
-            v0 = 3*(1-t)**2
-            v1 = 6*(1-t)*t
-            v2 = 3*t**2
-
-            velocity_dir = v0 * (control_point_1 - start_point) + \
-                          v1 * (control_point_2 - control_point_1) + \
-                          v2 * (end_point - control_point_2)
-
-            speed = np.linalg.norm(velocity_dir)
-            if speed > 1e-10:
-                velocity_dir = velocity_dir / speed
-                velocities.append(velocity_dir * self.velocity)
-            else:
-                velocities.append(np.array([0.0, 0.0]))
-
-            a0 = 6*(1-t)
-            a1 = 6*t
-
-            acceleration = a0 * (control_point_2 - 2*control_point_1 + start_point) + \
-                          a1 * (end_point - 2*control_point_2 + control_point_1)
-
-            accel_magnitude = self.velocity**2 * np.linalg.norm(acceleration) / (speed**2) if speed > 1e-10 else 0
-
-            if accel_magnitude > self.max_acceleration:
-                accel_magnitude = self.max_acceleration
-
-            if speed > 1e-10:
-                normal_vector = np.array([-velocity_dir[1], velocity_dir[0]])
-
-                if np.dot(normal_vector, acceleration) < 0:
-                    normal_vector = -normal_vector
-
-                accelerations.append(normal_vector * accel_magnitude)
-            else:
-                accelerations.append(np.array([0.0, 0.0]))
-
-        for i in range(num_samples):
-            self.trajectory.append(positions[i])
-            self.timestamps.append(self.time + duration * t_values[i])
-            self.velocities.append(velocities[i])
-            self.accelerations.append(accelerations[i])
-
-        # 返回曲线结束时的切线方向
-        self.last_velocity_direction = velocities[-1] / self.velocity if velocities else end_direction
-
-        self.time += duration
-
-        return self.last_velocity_direction
-
-
-def get_quad_vertices_from_detecting_region_info(detecting_region_info=None):
+def get_quad_vertices_from_detecting_region_info():
     """从DetectingRegionInfo对象中提取四边形顶点坐标"""
     # 定义四边形顶点，使用固定值
     quad_vertices = [
@@ -306,10 +149,10 @@ def generate_trajectory_with_ABC_in_quadrilateral(boundary_vertices, max_tries=1
     return None
 
 
-def generate_multiple_trajectories(num_trajectories, detecting_region_info=None):
+def generate_multiple_trajectories(num_trajectories):
     """生成多条轨迹"""
     # 提取四边形顶点
-    quad_vertices = get_quad_vertices_from_detecting_region_info(detecting_region_info)
+    quad_vertices = get_quad_vertices_from_detecting_region_info()
     
     trajectories = []
     
@@ -387,7 +230,7 @@ def generateLines(detecting_region_info=None, num_lines=5, time_interval=0.5, se
     np.random.seed(seed)
     
     # 生成轨迹
-    trajectories = generate_multiple_trajectories(num_lines, detecting_region_info)
+    trajectories = generate_multiple_trajectories(num_lines)
     
     # 初始化存储所有轨迹的列表
     all_lines_a = []

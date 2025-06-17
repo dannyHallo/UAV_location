@@ -16,7 +16,6 @@ class KANModel(nn.Module):
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class SpatialLocator(nn.Module):
