@@ -201,26 +201,12 @@ if __name__ == "__main__":
     # Ensure the 'dataset' directory exists
     os.makedirs("dataset", exist_ok=True)
 
-    # Define paths for the 'dataset' folder
-    train_set_path = "dataset/stage_1_train.pt"
-    test_set_path = "dataset/stage_1_test.pt"
-
-    # Generate the training dataset
     generate_and_save_dataset(
-        dataset_path=train_set_path,
-        num_regions=config.train_detecting_region_nums,
-        lines_per_region=config.train_num_of_lines_to_generate_per_region,
+        dataset_path=config.stage_1_dataset_path,
+        num_regions=config.num_detecting_regions,
+        lines_per_region=config.num_lines_to_generate_per_region,
         region_seed=config.region_seed,
-        line_seed=config.train_line_seed,
-    )
-
-    # Generate the testing dataset
-    generate_and_save_dataset(
-        dataset_path=test_set_path,
-        num_regions=config.test_detecting_region_nums,
-        lines_per_region=config.test_num_of_lines_to_generate_per_region,
-        region_seed=config.region_seed,
-        line_seed=config.test_line_seed,
+        line_seed=config.line_seed,
     )
 
     print("\nAll datasets generated.")
