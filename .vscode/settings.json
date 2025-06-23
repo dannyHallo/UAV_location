@@ -4,6 +4,5 @@
     "conda install env": "conda activate UAV_location && pip install -r requirements.txt",
     "generate stage 1 dataset": "python stage_1_dataset_gen.py",
     "visaulization": "python visualization.py",
-    "feed gpt": "python feeder.py --root ./ --match *.py *.ipynb --ignore src/kan/ .git/ vis/ get_f.ipynb hellokan.ipynb feeder.py"
   }
 }

@@ -1,0 +1,17 @@
+{
+    "include": [
+        "**.py",
+        "**.ipynb"
+    ],
+    "ignore": {
+        "customPatterns": [
+            "src/kan/**",
+            "hellokan.ipynb",
+            "get_f.ipynb",
+            "vis/**"
+        ]
+    },
+    "output": {
+        "removeComments": false
+    }
+}

@@ -3,9 +3,9 @@ figures/
 results/
 dataset/
 
-**/.DS_Store
+repomix-output.*
 
-# .vscode/
+**/.DS_Store
 
 # the followings are from template
 
