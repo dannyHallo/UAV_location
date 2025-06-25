@@ -1,6 +1,7 @@
-stage_1_dataset_path = "dataset/stage_1_dataset.pt"
+stage_1_dataset_train_path = "dataset/stage_1_dataset_train.pt"
+stage_1_dataset_test_path = "dataset/stage_1_dataset_test.pt"
 
-train_split_ratio = 0.85
+train_test_split_ratio = 0.85
 
 time_interval = 0.01
 
@@ -8,7 +9,8 @@ num_detecting_regions = 1
 visualize_num_detecting_regions = 1
 num_lines_to_generate_per_region = 500
 
-line_seed = 42
+line_seed_train = 2024
+line_seed_test = 2026
 visualize_line_seed = 0
 
 region_seed = 42  # the only region we are using

@@ -18,6 +18,7 @@ from src.features_and_labels_generator import (
 from src.get_phi_info import get_angle_phi
 from src.w_and_doppler_generator import generate_w_and_doppler
 from src.extra_info_generator import get_extra_infos
+from src.seed_utils import spawn_child_seeds
 
 
 def construct_dataset(
@@ -78,32 +79,25 @@ def construct_dataset_worker(args):
         print(f"Error in worker process with seed {seed}: {e}")
         return None, None, None
 
-
 def construct_dataset_parallel(
-    detecting_region_info, num_total_lines, doppler_info, base_seed
+    detecting_region_info, num_total_lines: int, doppler_info, base_entropy
 ):
-    """
-    Generates a dataset in parallel by distributing the line generation
-    across multiple CPU cores.
-    """
-    # Determine the number of worker processes, leaving one core free.
     num_workers = max(1, cpu_count() - 1)
     print(f"Using {num_workers} worker processes (multi-threaded)...")
 
-    # Divide the total number of lines among the workers
+    seeds = spawn_child_seeds(base_entropy, num_workers)
+
+    # split the work as before
     lines_per_worker = [num_total_lines // num_workers] * num_workers
     for i in range(num_total_lines % num_workers):
         lines_per_worker[i] += 1
 
-    # Generate a unique seed for each worker
-    seeds = [base_seed + i for i in range(num_workers)]
     tasks = [
         (lines, seed, detecting_region_info, doppler_info)
         for lines, seed in zip(lines_per_worker, seeds)
     ]
 
     all_features, all_labels, all_extra_infos = [], [], []
-
     with Pool(processes=num_workers) as pool:
         results = list(
             tqdm(
@@ -122,19 +116,20 @@ def construct_dataset_parallel(
     if not all_features:
         return np.array([]), np.array([]), np.array([])
 
-    final_features = np.concatenate(all_features, axis=0)
-    final_labels = np.concatenate(all_labels, axis=0)
-    final_extra_infos = np.concatenate(all_extra_infos, axis=0)
-
-    return final_features, final_labels, final_extra_infos
+    return (
+        np.concatenate(all_features, axis=0),
+        np.concatenate(all_labels, axis=0),
+        np.concatenate(all_extra_infos, axis=0),
+    )
 
 
 def generate_and_save_dataset(
     dataset_path, num_regions, lines_per_region, region_seed, line_seed
 ):
     """
-    Main function to orchestrate the generation and saving of a dataset
-    using parallel processing.
+    `line_seed` now acts as the *parent entropy* for the whole dataset.
+    Every region and every worker will get an independent, deterministic
+    child seed derived from it – no overlaps possible.
     """
     if os.path.exists(dataset_path):
         print(f"Dataset already exists at {dataset_path}. Skipping generation.")
@@ -150,15 +145,20 @@ def generate_and_save_dataset(
         num_configurations=num_regions, seed=region_seed
     )
 
+    region_seeds = spawn_child_seeds(line_seed, num_regions)
+
     full_features, full_labels, full_extra_infos = [], [], []
 
-    for i, region_info in enumerate(detecting_region_infos):
-        print(f"Processing region {i+1}/{num_regions}...")
-        line_seed = line_seed + num_regions + i
+    for i, (region_info, region_entropy) in enumerate(
+        zip(detecting_region_infos, region_seeds)
+    ):
+        print(f"Processing region {i + 1}/{num_regions} ...")
 
-        # Directly call the parallel constructor
         features, labels, extra_infos = construct_dataset_parallel(
-            region_info, lines_per_region, doppler_info, line_seed
+            region_info,
+            int(lines_per_region),
+            doppler_info,
+            base_entropy=region_entropy,
         )
 
         if len(features) > 0:
@@ -199,11 +199,19 @@ if __name__ == "__main__":
     os.makedirs("dataset", exist_ok=True)
 
     generate_and_save_dataset(
-        dataset_path=config.stage_1_dataset_path,
+        dataset_path=config.stage_1_dataset_train_path,
         num_regions=config.num_detecting_regions,
-        lines_per_region=config.num_lines_to_generate_per_region,
+        lines_per_region=config.num_lines_to_generate_per_region * config.train_test_split_ratio,
         region_seed=config.region_seed,
-        line_seed=config.line_seed,
+        line_seed=config.line_seed_train,
+    )
+    
+    generate_and_save_dataset(
+        dataset_path=config.stage_1_dataset_test_path,
+        num_regions=config.num_detecting_regions,
+        lines_per_region=config.num_lines_to_generate_per_region * (1 - config.train_test_split_ratio),
+        region_seed=config.region_seed,
+        line_seed=config.line_seed_test,
     )
 
     print("\nAll datasets generated.")
