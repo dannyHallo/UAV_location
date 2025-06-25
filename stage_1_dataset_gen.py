@@ -194,11 +194,8 @@ def load_dataset(path):
 
 
 if __name__ == "__main__":
-    print("=" * 60)
     print("Starting Parallel Dataset Generation")
-    print("=" * 60)
 
-    # Ensure the 'dataset' directory exists
     os.makedirs("dataset", exist_ok=True)
 
     generate_and_save_dataset(
