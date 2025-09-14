@@ -1,11 +1,5 @@
-# ──────────────────────────────────────────────────────────────
-# src/uav_model.py  ✦ Drop-in “更强版” 实现
-# ──────────────────────────────────────────────────────────────
 import math
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional
 
 
 # =============== 1. 🍃 轻量 SE-ResMLP 基本块 ===================
@@ -105,26 +99,3 @@ class UavModel(nn.Module):
         x = self.embed(x)
         x = self.blocks(x)
         return self.head(x)
-
-
-# =============== 3. 🚀 训练 / 推理建议 ===========================
-"""
-1. torch.compile
-   model = torch.compile(model)          # 只需一行，训练/推理双提速
-
-2. 混合精度（AMP）
-   with torch.cuda.amp.autocast():
-       loss = criterion(model(inp), tgt)
-
-3. One-Cycle LR
-   optim = torch.optim.AdamW(model.parameters(), lr=8e-4, weight_decay=1e-2)
-   scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optim, max_lr=8e-4, pct_start=0.15,
-        steps_per_epoch=len(train_loader), epochs=cf.epoch)
-
-4. Label smoothing
-   targets[:,1:] = targets[:,1:] * .95             # sin,cos
-   # or add small noise to angles to improve generalisation
-
-5. Early-Stopping / ModelCheckpoint 已在你的训练循环里具备，可继续沿用。
-"""
