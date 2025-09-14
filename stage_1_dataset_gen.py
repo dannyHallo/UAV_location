@@ -24,10 +24,9 @@ def construct_dataset(
     detecting_region_info, num_of_lines_to_generate, doppler_info, seed
 ):
     """
-    Constructs a dataset for a single detecting region.
-    This function contains the core logic that will be executed by each worker.
+    为单个区域构建数据集。
+    修改：现在返回每个轨迹的数据列表，而不是拼接后的大数组。
     """
-    # 1. Generate trajectories (lines) for the given region
     lines_a, lines_b = generate_lines(
         detecting_region_info,
         num_lines=num_of_lines_to_generate,
@@ -36,47 +35,49 @@ def construct_dataset(
     )
 
     if not lines_a:
-        return None, None, None
+        return [], [], [], []
 
-    # 2. Extract individual coordinates from the trajectories
-    coords_a = _extract_coords_from_lines(lines_a)
-    coords_b = _extract_coords_from_lines(lines_b)
+    list_features, list_labels, list_extra_infos = [], [], []
+    trajectory_lengths = []
 
-    if coords_a.shape[0] == 0:
-        return None, None, None
+    for i in range(len(lines_a)):
+        coords_a = lines_a[i]
+        coords_b = lines_b[i]
 
-    # 3. Calculate phi angles for each coordinate pair
-    phis1234 = np.array(
-        [
-            get_angle_phi(detecting_region_info, ca, cb)
-            for ca, cb in zip(coords_a, coords_b)
-        ]
-    )
+        if coords_a.shape[0] == 0:
+            continue
 
-    # 4. Generate w and doppler values
-    w, doppler = generate_w_and_doppler(
-        detecting_region_info, doppler_info, coords_a, coords_b, phis1234
-    )
+        phis1234 = np.array(
+            [
+                get_angle_phi(detecting_region_info, ca, cb)
+                for ca, cb in zip(coords_a, coords_b)
+            ]
+        )
+        w, doppler = generate_w_and_doppler(
+            detecting_region_info, doppler_info, coords_a, coords_b, phis1234
+        )
+        features = get_features(phis1234, w, doppler)
+        labels = get_labels(detecting_region_info, coords_b)
+        extra_infos = get_extra_infos(detecting_region_info, coords_a)
 
-    # 5. Assemble final features and labels
-    features = get_features(phis1234, w, doppler)
-    labels = get_labels(detecting_region_info, coords_b)
-    extra_infos = get_extra_infos(detecting_region_info, coords_a)
+        list_features.append(features)
+        list_labels.append(labels)
+        list_extra_infos.append(extra_infos)
+        trajectory_lengths.append(len(features))
 
-    return features, labels, extra_infos
+    return list_features, list_labels, list_extra_infos, trajectory_lengths
 
 
 def construct_dataset_worker(args):
     """
-    A wrapper function for the multiprocessing Pool. It unpacks arguments
-    and calls the main dataset construction logic.
+    多进程工作单元的包装器。
     """
     num_lines, seed, detecting_region_info, doppler_info = args
     try:
         return construct_dataset(detecting_region_info, num_lines, doppler_info, seed)
     except Exception as e:
         print(f"Error in worker process with seed {seed}: {e}")
-        return None, None, None
+        return [], [], [], []
 
 
 def construct_dataset_parallel(
@@ -86,8 +87,6 @@ def construct_dataset_parallel(
     print(f"Using {num_workers} worker processes (multi-threaded)...")
 
     seeds = spawn_child_seeds(base_entropy, num_workers)
-
-    # split the work as before
     lines_per_worker = [num_total_lines // num_workers] * num_workers
     for i in range(num_total_lines % num_workers):
         lines_per_worker[i] += 1
@@ -97,7 +96,9 @@ def construct_dataset_parallel(
         for lines, seed in zip(lines_per_worker, seeds)
     ]
 
-    all_features, all_labels, all_extra_infos = [], [], []
+    all_features_list, all_labels_list, all_extra_infos_list = [], [], []
+    all_lengths = []
+
     with Pool(processes=num_workers) as pool:
         results = list(
             tqdm(
@@ -107,30 +108,27 @@ def construct_dataset_parallel(
             )
         )
 
-    for features, labels, extra_infos in results:
-        if features is not None and len(features) > 0:
-            all_features.append(features)
-            all_labels.append(labels)
-            all_extra_infos.append(extra_infos)
+    for f_list, l_list, e_list, lengths in results:
+        if f_list:
+            all_features_list.extend(f_list)
+            all_labels_list.extend(l_list)
+            all_extra_infos_list.extend(e_list)
+            all_lengths.extend(lengths)
 
-    if not all_features:
-        return np.array([]), np.array([]), np.array([])
+    if not all_features_list:
+        return np.array([]), np.array([]), np.array([]), []
 
-    return (
-        np.concatenate(all_features, axis=0),
-        np.concatenate(all_labels, axis=0),
-        np.concatenate(all_extra_infos, axis=0),
-    )
+    # 现在进行拼接
+    final_features = np.concatenate(all_features_list, axis=0)
+    final_labels = np.concatenate(all_labels_list, axis=0)
+    final_extra_infos = np.concatenate(all_extra_infos_list, axis=0)
+
+    return final_features, final_labels, final_extra_infos, all_lengths
 
 
 def generate_and_save_dataset(
     dataset_path, num_regions, lines_per_region, region_seed, line_seed
 ):
-    """
-    `line_seed` now acts as the *parent entropy* for the whole dataset.
-    Every region and every worker will get an independent, deterministic
-    child seed derived from it – no overlaps possible.
-    """
     if os.path.exists(dataset_path):
         print(f"Dataset already exists at {dataset_path}. Skipping generation.")
         return
@@ -144,27 +142,25 @@ def generate_and_save_dataset(
     detecting_region_infos = generate_detecting_region_infos(
         num_configurations=num_regions, seed=region_seed
     )
-
     region_seeds = spawn_child_seeds(line_seed, num_regions)
 
-    full_features, full_labels, full_extra_infos = [], [], []
+    full_features, full_labels, full_extra_infos, full_lengths = [], [], [], []
 
     for i, (region_info, region_entropy) in enumerate(
         zip(detecting_region_infos, region_seeds)
     ):
         print(f"Processing region {i + 1}/{num_regions} ...")
-
-        features, labels, extra_infos = construct_dataset_parallel(
+        features, labels, extra_infos, lengths = construct_dataset_parallel(
             region_info,
             int(lines_per_region),
             doppler_info,
             base_entropy=region_entropy,
         )
-
         if len(features) > 0:
             full_features.append(features)
             full_labels.append(labels)
             full_extra_infos.append(extra_infos)
+            full_lengths.extend(lengths)
 
     if not full_features:
         print("Warning: No data was generated.")
@@ -174,22 +170,28 @@ def generate_and_save_dataset(
     final_labels = np.concatenate(full_labels, axis=0)
     final_extra_infos = np.concatenate(full_extra_infos, axis=0)
 
-    dataset = TrajectoryDataset(final_features, final_labels, final_extra_infos)
+    # 不再保存 TrajectoryDataset 对象，而是保存一个包含所有信息的字典
+    dataset_dict = {
+        "features": torch.tensor(final_features, dtype=torch.float32),
+        "labels": torch.tensor(final_labels, dtype=torch.float32),
+        "extra_infos": torch.tensor(final_extra_infos, dtype=torch.float32),
+        "trajectory_lengths": full_lengths,
+    }
+
     os.makedirs(os.path.dirname(dataset_path), exist_ok=True)
-    torch.save(dataset, dataset_path)
+    torch.save(dataset_dict, dataset_path)
 
     end_time = time.time()
     print(f"Successfully generated and saved dataset to {dataset_path}")
     print(f"Total generated data points: {len(final_features)}")
+    print(f"Total number of trajectories: {len(full_lengths)}")
     print(f"Total time taken: {end_time - start_time:.2f} seconds")
 
 
 def load_dataset(path):
-    """Loads a dataset from the specified path."""
+    """从指定路径加载数据集字典。"""
     print(f"Loading dataset from {path}...")
-    # FIX: Explicitly set weights_only=False to silence the FutureWarning.
-    # This is safe because we are loading a trusted file that we generated ourselves,
-    # and we need to load the full TrajectoryDataset object, not just tensors.
+    # 我们信任自己生成的文件
     return torch.load(path, weights_only=False)
 
 
