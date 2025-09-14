@@ -6,106 +6,93 @@ import numpy as np
 class CartesianTestLoss(nn.Module):
     """
     混合坐标系损失函数：
-    - 训练模式(model.train())：处理 [距离, sin(θ), cos(θ)] 格式输入，使用MSE损失
-    并添加sin²(θ) + cos²(θ) = 1 的三角约束
-    - 测试模式(model.eval())：将输出转换为笛卡尔坐标 [ρcosθ, ρsinθ] 计算欧几里得误差
 
-    可通过normalize_distance开关控制是否进行归一化
-    使用标准的PyTorch train/eval机制切换模式
+    网络输出仍为 [r, sin(theta), cos(theta)]，
+        r = 极坐标半径 (可归一化)
+
+    主损失始终在笛卡尔坐标 (x,y) 上计算：
+        L_main = ‖(x_pred, y_pred) - (x_true, y_true)‖²
+    并附加三角恒等式约束：
+        L_trig = (sin² + cos² - 1)²
+
+    total_loss = L_main + λ·L_trig
     """
 
     def __init__(
         self,
-        distance_scale=200.0,  # 距离归一化系数
-        normalize_distance=True,  # 是否对距离进行归一化
-        trig_constraint_weight=0.5,
+        distance_scale: float = 200.0,      # r 归一化系数
+        normalize_distance: bool = True,    # 是否对 r 归一化
+        trig_constraint_weight: float = 0.01,
     ):
         super(CartesianTestLoss, self).__init__()
-        self.distance_scale = distance_scale
-        self.normalize_distance = normalize_distance
-        self.trig_constraint_weight = trig_constraint_weight
-        self.epsilon = 1e-10
+        self.distance_scale = float(distance_scale)
+        self.normalize_distance = bool(normalize_distance)
+        self.trig_constraint_weight = float(trig_constraint_weight)
+        self.epsilon = 1e-10  # 避免 sqrt(0)
 
-        # 默认设置为训练模式
-        self.train()
-
-    def mse_loss(self, pred, target):
-        """计算均方误差损失"""
+    # ---------- 工具函数 ---------- #
+    @staticmethod
+    def mse_loss(pred, target):
         return torch.mean((pred - target) ** 2)
 
     def safe_sqrt(self, x):
-        """安全的平方根计算，确保输入非负"""
         return torch.sqrt(torch.clamp(x, min=self.epsilon))
 
     def normalize_dist(self, distance):
-        """归一化距离值以提高数值稳定性"""
+        """r  →  r_hat"""
         if self.normalize_distance:
             return distance / self.distance_scale
-        else:
-            return distance
+        return distance
 
-    def trig_identity_loss(self, sin_values, cos_values):
-        sum_of_squares = sin_values**2 + cos_values**2
-        trig_loss = torch.mean((sum_of_squares - 1.0) ** 2)
-        return trig_loss
+    def denormalize_dist(self, distance_hat):
+        """r_hat  →  r"""
+        if self.normalize_distance:
+            return distance_hat * self.distance_scale
+        return distance_hat
 
+    @staticmethod
+    def trig_identity_loss(sin_values, cos_values):
+        """(sin² + cos² − 1)²"""
+        return torch.mean((sin_values**2 + cos_values**2 - 1.0) ** 2)
+
+    # ---------- 评估用欧氏误差（米） ---------- #
     def _compute_cartesian_error(self, outputs, targets):
-        """
-        计算笛卡尔坐标系中的欧几里得误差
-        将极坐标输出转换为笛卡尔坐标后计算误差
-        """
-        # 提取各个维度
-        distance_outputs = outputs[:, 0]  # ρ_pred
-        sin_outputs = outputs[:, 1]  # sin(θ)_pred
-        cos_outputs = outputs[:, 2]  # cos(θ)_pred
+        r_hat, s_hat, c_hat = outputs[:, 0], outputs[:, 1], outputs[:, 2]
+        r,     s,     c     = targets[:, 0], targets[:, 1], targets[:, 2]
 
-        distance_targets = targets[:, 0]  # ρ_real
-        sin_targets = targets[:, 1]  # sin(θ)_real
-        cos_targets = targets[:, 2]  # cos(θ)_real
+        r_hat = self.denormalize_dist(r_hat)
+        r     = self.denormalize_dist(r)
 
-        # 计算笛卡尔坐标
-        x_pred = distance_outputs * cos_outputs  # ρcosθ
-        y_pred = distance_outputs * sin_outputs  # ρsinθ
+        x_pred = r_hat * c_hat
+        y_pred = r_hat * s_hat
+        x_true = r     * c
+        y_true = r     * s
 
-        x_true = distance_targets * cos_targets
-        y_true = distance_targets * sin_targets
+        euclidean_dist = self.safe_sqrt((x_pred - x_true) ** 2 +
+                                        (y_pred - y_true) ** 2)
+        return torch.mean(euclidean_dist)
 
-        # 计算每个样本的欧几里得距离
-        squared_distances = (x_pred - x_true) ** 2 + (y_pred - y_true) ** 2
-        euclidean_distances = self.safe_sqrt(squared_distances)
-
-        # 返回平均欧几里得距离
-        return torch.mean(euclidean_distances)
-
+    # ---------- 前向：训练 / 推断主损失 ---------- #
     def forward(self, outputs, targets):
-        distance_outputs = outputs[:, 0]  # ρ_pred
-        sin_outputs = outputs[:, 1]  # sin(θ)_pred``
-        cos_outputs = outputs[:, 2]  # cos(θ)_pred
+        r_hat, s_hat, c_hat = outputs[:, 0], outputs[:, 1], outputs[:, 2]
+        r,     s,     c     = targets[:, 0], targets[:, 1], targets[:, 2]
 
-        distance_targets = targets[:, 0]  # ρ_real
-        sin_targets = targets[:, 1]  # sin(θ)_real
-        cos_targets = targets[:, 2]  # cos(θ)_real
+        # 反归一化
+        r_hat_real = self.denormalize_dist(r_hat)
+        r_real     = self.denormalize_dist(r)
 
-        # if not self.training:
-        #     return self._compute_cartesian_error(outputs, targets)
+        # 极坐标 -> 笛卡尔
+        x_pred = r_hat_real * c_hat
+        y_pred = r_hat_real * s_hat
+        x_true = r_real     * c
+        y_true = r_real     * s
 
-        # 归一化距离（如果启用）
-        norm_distance_outputs = self.normalize_dist(distance_outputs)
-        norm_distance_targets = self.normalize_dist(distance_targets)
+        # ① 主损失：笛卡尔平方误差
+        cartesian_loss = torch.mean((x_pred - x_true) ** 2 +
+                                    (y_pred - y_true) ** 2)
 
-        # 计算各部分Loss
-        distance_loss = self.mse_loss(norm_distance_outputs, norm_distance_targets)
-        sin_loss = self.mse_loss(sin_outputs, sin_targets)
-        cos_loss = self.mse_loss(cos_outputs, cos_targets)
+        # ② 三角恒等式约束
+        trig_loss = self.trig_identity_loss(s_hat, c_hat)
 
-        trig_loss = self.trig_identity_loss(sin_outputs, cos_outputs)
-
-        # 计算总损失 - 无权重区分，简单相加
-        total_loss = (
-            distance_loss
-            + sin_loss
-            + cos_loss
-            + self.trig_constraint_weight * trig_loss
-        )
-
+        total_loss = cartesian_loss + self.trig_constraint_weight * trig_loss
         return total_loss

@@ -25,7 +25,7 @@ from matplotlib.patches import Polygon
 from src.detecting_region_info_generator import generate_detecting_region_infos
 from src.trajectory_generator import (
     generate_trajectories_in_region,
-    _generate_lines_from_trajectory,
+    generate_lines_from_trajectory,
 )
 
 # --- Imports for Model Prediction ---
@@ -170,10 +170,13 @@ class App(tk.Tk):
         self.true_labels = None
 
         # 1. Generate the base detecting region
-        region_infos = generate_detecting_region_infos(num_configurations=1, seed=config.region_seed)
+        region_infos = generate_detecting_region_infos(
+            num_configurations=1, seed=config.region_seed
+        )
         if not region_infos:
             messagebox.showwarning(
-                "Generation Failed", f"Could not generate a valid region for seed {seed}."
+                "Generation Failed",
+                f"Could not generate a valid region for seed {seed}.",
             )
             return
         self.detecting_region_info = region_infos[0]
@@ -279,7 +282,9 @@ class App(tk.Tk):
 
                 self.predictions = outputs.cpu().numpy()
                 self.true_labels = labels
-                self.status_var.set(f"✅ Prediction complete for {selected_trajectory.name}")
+                self.status_var.set(
+                    f"✅ Prediction complete for {selected_trajectory.name}"
+                )
             except Exception as e:
                 self.status_var.set(f"❌ Prediction error: {e}")
                 self.predictions = None
@@ -298,15 +303,16 @@ class App(tk.Tk):
         doppler_info = doppler_info_module.DopplerInfo(
             c=C, fc=FC, time_interval=TIME_INTERVAL
         )
-        coords_a, coords_b = _generate_lines_from_trajectory(
-            trajectory, TIME_INTERVAL
-        )
+        coords_a, coords_b = generate_lines_from_trajectory(trajectory, TIME_INTERVAL)
 
         if len(coords_a) < 1:
             return None, None
 
         phis1234 = np.array(
-            [get_angle_phi(detecting_region_info, ca, cb) for ca, cb in zip(coords_a, coords_b)]
+            [
+                get_angle_phi(detecting_region_info, ca, cb)
+                for ca, cb in zip(coords_a, coords_b)
+            ]
         )
         w, doppler = generate_w_and_doppler(
             detecting_region_info, doppler_info, coords_a, coords_b, phis1234
@@ -406,7 +412,11 @@ class App(tk.Tk):
             if trajectory.trajectory:
                 path_points = np.array(trajectory.trajectory)
                 self.ax.plot(
-                    path_points[:, 0], path_points[:, 1], "b-", lw=2, label=trajectory.name
+                    path_points[:, 0],
+                    path_points[:, 1],
+                    "b-",
+                    lw=2,
+                    label=trajectory.name,
                 )
             if trajectory.key_points:
                 key_points = np.array(trajectory.key_points)
@@ -429,7 +439,9 @@ class App(tk.Tk):
             self.ax.set_xlim(min(all_x) - padding, max(all_x) + padding)
             self.ax.set_ylim(min(all_y) - padding, max(all_y) + padding)
 
-        self.ax.set_title(f"Trajectory Visualization (Region Seed: {self.seed_var.get()})")
+        self.ax.set_title(
+            f"Trajectory Visualization (Region Seed: {self.seed_var.get()})"
+        )
         self.ax.set_xlabel("X-coordinate")
         self.ax.set_ylabel("Y-coordinate")
         self.ax.grid(True)
