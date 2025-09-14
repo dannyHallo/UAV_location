@@ -4,9 +4,6 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-
-
-
 import src.config as config
 from src.trajectory_dataset import TrajectoryDataset
 from src.detecting_region_info_generator import generate_detecting_region_infos
@@ -80,6 +77,7 @@ def construct_dataset_worker(args):
     except Exception as e:
         print(f"Error in worker process with seed {seed}: {e}")
         return None, None, None
+
 
 def construct_dataset_parallel(
     detecting_region_info, num_total_lines: int, doppler_info, base_entropy
@@ -195,7 +193,7 @@ def load_dataset(path):
     return torch.load(path, weights_only=False)
 
 
-if __name__ == "__main__":
+def main():
     print("Starting Parallel Dataset Generation")
 
     os.makedirs("dataset", exist_ok=True)
@@ -203,17 +201,23 @@ if __name__ == "__main__":
     generate_and_save_dataset(
         dataset_path=config.stage_1_dataset_train_path,
         num_regions=config.num_detecting_regions,
-        lines_per_region=config.num_lines_to_generate_per_region * config.train_test_split_ratio,
+        lines_per_region=config.num_lines_to_generate_per_region
+        * config.train_test_split_ratio,
         region_seed=config.region_seed,
         line_seed=config.line_seed_train,
     )
-    
+
     generate_and_save_dataset(
         dataset_path=config.stage_1_dataset_test_path,
         num_regions=config.num_detecting_regions,
-        lines_per_region=config.num_lines_to_generate_per_region * (1 - config.train_test_split_ratio),
+        lines_per_region=config.num_lines_to_generate_per_region
+        * (1 - config.train_test_split_ratio),
         region_seed=config.region_seed,
         line_seed=config.line_seed_test,
     )
 
     print("\nAll datasets generated.")
+
+
+if __name__ == "__main__":
+    main()
