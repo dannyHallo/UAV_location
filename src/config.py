@@ -9,7 +9,7 @@ num_detecting_regions = 1
 visualize_num_detecting_regions = 1
 num_lines_to_generate_per_region = 500
 
-sequence_length = 2
+sequence_length = 1
 
 line_seed_train = 2024
 line_seed_test = 2026
