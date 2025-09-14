@@ -1,5 +1,7 @@
 import math
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 # =============== 1. 🍃 轻量 SE-ResMLP 基本块 ===================
@@ -56,7 +58,7 @@ class SEResBlock(nn.Module):
         return residual + y  # 残差输出
 
 
-# =============== 2. 🌟 改进 UAV 模型 ============================
+# =============== 2. 🌟 改进 UAV 模型 (Original for sequence_length=1) ============================
 class UavModel(nn.Module):
     """
     输入维度: 6
@@ -99,3 +101,90 @@ class UavModel(nn.Module):
         x = self.embed(x)
         x = self.blocks(x)
         return self.head(x)
+
+
+# =============== 3. 🚀 New UAV Model with LSTM for Sequences ============================
+class UavModelWithLSTM(nn.Module):
+    """
+    A sequential UAV model that uses an LSTM to process trajectory sequences.
+
+    Architecture:
+    1.  An embedding layer processes each time step's features independently.
+    2.  An LSTM layer processes the sequence of embedded features.
+    3.  The final hidden state of the LSTM is taken as the sequence's summary.
+    4.  A prediction head maps this summary to the final output [ρ, sinθ, cosθ].
+    """
+
+    def __init__(
+        self,
+        in_dim: int = 6,
+        embed_dim: int = 96,
+        lstm_hidden_size: int = 128,
+        lstm_layers: int = 2,
+        lstm_dropout: float = 0.1,
+    ):
+        """
+        Args:
+            in_dim (int): Dimension of input features per time step (e.g., 6).
+            embed_dim (int): Dimension to embed each time step's features into.
+            lstm_hidden_size (int): The number of features in the LSTM hidden state.
+            lstm_layers (int): Number of recurrent LSTM layers.
+            lstm_dropout (float): Dropout probability for LSTM layers (if lstm_layers > 1).
+        """
+        super().__init__()
+
+        # 1. Embedding Layer: Processes each time step from (in_dim) to (embed_dim)
+        self.embed = nn.Linear(in_dim, embed_dim, bias=False)
+
+        # 2. LSTM Layer: Processes the sequence of embedded features.
+        #    batch_first=True is crucial as our data is shaped (batch, sequence_length, features).
+        self.lstm = nn.LSTM(
+            input_size=embed_dim,
+            hidden_size=lstm_hidden_size,
+            num_layers=lstm_layers,
+            batch_first=True,
+            dropout=lstm_dropout if lstm_layers > 1 else 0,
+        )
+
+        # 3. Prediction Head: Maps the final LSTM hidden state to the output.
+        self.head = nn.Sequential(
+            nn.LayerNorm(lstm_hidden_size),
+            nn.Linear(lstm_hidden_size, 128),
+            nn.GELU(),
+            nn.Linear(128, 3),  # Output: [ρ, sinθ, cosθ]
+        )
+
+        # Initialization
+        for m in self.modules():
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for the sequential model.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, sequence_length, in_dim).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, 3).
+        """
+        # x shape: (batch, seq_len, in_dim)
+
+        # 1. Apply embedding to each time step
+        x = self.embed(x)  # -> (batch, seq_len, embed_dim)
+        x = F.gelu(x)
+
+        # 2. Pass the sequence through the LSTM
+        # lstm_out contains the hidden state for each time step.
+        # (h_n, c_n) contains the final hidden and cell states.
+        lstm_out, (h_n, c_n) = self.lstm(x)
+        # lstm_out shape: (batch, seq_len, lstm_hidden_size)
+
+        # 3. We only need the output from the last time step, as it summarizes the sequence.
+        last_hidden_state = lstm_out[:, -1, :]  # -> (batch, lstm_hidden_size)
+
+        # 4. Pass the summary through the prediction head
+        output = self.head(last_hidden_state)  # -> (batch, 3)
+
+        return output

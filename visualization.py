@@ -31,7 +31,9 @@ from src.trajectory_generator import (
 # --- Imports for Model Prediction ---
 try:
     import torch
-    from src.uav_model import UavModel
+
+    # MODIFIED: Import both models
+    from src.uav_model import UavModel, UavModelWithLSTM
     import src.doppler_info as doppler_info_module
     from src.get_phi_info import get_angle_phi
     from src.w_and_doppler_generator import generate_w_and_doppler
@@ -130,6 +132,16 @@ class App(tk.Tk):
         )
         self.load_model_button.pack(side=tk.LEFT)
 
+        # NEW: Add Sequence Length entry for model loading
+        tk.Label(model_frame, text="Sequence Length:", font=("Helvetica", 10)).pack(
+            side=tk.LEFT, padx=(10, 5)
+        )
+        self.sequence_length_var = tk.StringVar(value=str(config.sequence_length))
+        self.sequence_length_entry = tk.Entry(
+            model_frame, textvariable=self.sequence_length_var, width=5
+        )
+        self.sequence_length_entry.pack(side=tk.LEFT)
+
         self.model_path_var = tk.StringVar(value="No model loaded.")
         tk.Label(
             model_frame, textvariable=self.model_path_var, font=("Helvetica", 9)
@@ -165,11 +177,9 @@ class App(tk.Tk):
             )
             return
 
-        # Clear previous prediction data
         self.predictions = None
         self.true_labels = None
 
-        # 1. Generate the base detecting region
         region_infos = generate_detecting_region_infos(
             num_configurations=1, seed=config.region_seed
         )
@@ -181,7 +191,6 @@ class App(tk.Tk):
             return
         self.detecting_region_info = region_infos[0]
 
-        # 2. Generate trajectories within the region
         self.trajectories, self.outer_vertices, self.inner_vertices = (
             generate_trajectories_in_region(
                 self.detecting_region_info,
@@ -191,7 +200,6 @@ class App(tk.Tk):
             )
         )
 
-        # 3. Update the dropdown menu
         if self.trajectories:
             self.trajectory_selector["values"] = [t.name for t in self.trajectories]
             self.trajectory_selector.current(0)
@@ -202,13 +210,19 @@ class App(tk.Tk):
                 "Info", "No valid trajectories could be generated with these settings."
             )
 
-        # 4. Trigger visualization of the first trajectory
         self.visualize_selected_trajectory()
 
     def load_model(self):
         """Opens a dialog to load a PyTorch model state dictionary."""
         if not TORCH_AVAILABLE:
             self.status_var.set("⚠️ Cannot load model: PyTorch not installed.")
+            return
+
+        try:
+            # MODIFIED: Get sequence length from UI
+            sequence_length = int(self.sequence_length_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Sequence Length must be an integer.")
             return
 
         filepath = filedialog.askopenfilename(
@@ -221,15 +235,24 @@ class App(tk.Tk):
 
         try:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model = UavModel().to(self.device)
-            # safe‐load weights only, to reduce untrusted‐pickle attack surface
+
+            # MODIFIED: Instantiate the correct model based on sequence length
+            if sequence_length > 1:
+                self.status_var.set(
+                    f"Loading sequential model (length={sequence_length})..."
+                )
+                model = UavModelWithLSTM().to(self.device)
+            else:
+                self.status_var.set("Loading non-sequential model...")
+                model = UavModel().to(self.device)
+
             try:
                 checkpoint = torch.load(
                     filepath, map_location=self.device, weights_only=True
                 )
             except TypeError:
-                # older torch versions don’t support weights_only
                 checkpoint = torch.load(filepath, map_location=self.device)
+
             model.load_state_dict(checkpoint)
             model.eval()
 
@@ -261,22 +284,48 @@ class App(tk.Tk):
             self.status_var.set("⚠️ Please generate and select a trajectory.")
             return
 
+        try:
+            # MODIFIED: Get sequence length from UI
+            sequence_length = int(self.sequence_length_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Sequence Length must be an integer.")
+            return
+
         selected_trajectory = self.trajectories[selected_index]
 
-        # Prepare data for the model
+        # MODIFIED: Pass sequence_length to data preparation
         features, labels = self._prepare_data_for_model(
-            selected_trajectory, self.detecting_region_info
+            selected_trajectory, self.detecting_region_info, sequence_length
         )
 
         if features is None:
-            self.status_var.set("ℹ️ Trajectory too short, no prediction.")
+            self.status_var.set("ℹ️ Trajectory too short for sequencing, no prediction.")
             self.predictions = None
             self.true_labels = None
         else:
             try:
-                features_tensor = torch.tensor(features, dtype=torch.float32).to(
-                    self.device
+                # The input features tensor is now either (num_points, 6) or (num_sequences, seq_len, 6)
+                # We need to add a batch dimension for the model.
+                features_tensor = (
+                    torch.tensor(features, dtype=torch.float32)
+                    .unsqueeze(0)
+                    .to(self.device)
                 )
+
+                # If non-sequential, the shape is (1, num_points, 6), which is wrong for UavModel.
+                # If sequential, the shape is (1, num_sequences, seq_len, 6), also wrong.
+                # The model expects a batch dimension, so we'll process the whole trajectory as one batch.
+                if sequence_length == 1:
+                    # Shape (num_points, 6)
+                    features_tensor = torch.tensor(features, dtype=torch.float32).to(
+                        self.device
+                    )
+                else:
+                    # Shape (num_sequences, seq_len, 6)
+                    features_tensor = torch.tensor(features, dtype=torch.float32).to(
+                        self.device
+                    )
+
                 with torch.no_grad():
                     outputs = self.model(features_tensor)
 
@@ -290,12 +339,15 @@ class App(tk.Tk):
                 self.predictions = None
                 self.true_labels = None
 
-        # Re-draw the plot with the new prediction data
         self.visualize_selected_trajectory()
 
-    def _prepare_data_for_model(self, trajectory, detecting_region_info):
-        """Constructs features and labels from a trajectory for model input."""
-        # Constants from src/config.py
+    def _prepare_data_for_model(
+        self, trajectory, detecting_region_info, sequence_length
+    ):
+        """
+        MODIFIED: Constructs features and labels, creating sequences if sequence_length > 1.
+        """
+        # Constants
         TIME_INTERVAL = 0.01
         FC = 6e9
         C = 3e8
@@ -305,7 +357,7 @@ class App(tk.Tk):
         )
         coords_a, coords_b = generate_lines_from_trajectory(trajectory, TIME_INTERVAL)
 
-        if len(coords_a) < 1:
+        if len(coords_a) < sequence_length:
             return None, None
 
         phis1234 = np.array(
@@ -317,10 +369,31 @@ class App(tk.Tk):
         w, doppler = generate_w_and_doppler(
             detecting_region_info, doppler_info, coords_a, coords_b, phis1234
         )
-        features = get_features(phis1234, w, doppler)
-        labels = get_labels(detecting_region_info, coords_b)
 
-        return features, labels
+        # These are the "flat" features and labels for each time step
+        flat_features = get_features(phis1234, w, doppler)
+        flat_labels = get_labels(detecting_region_info, coords_b)
+
+        # If sequence length is 1, behavior is as before
+        if sequence_length <= 1:
+            return flat_features, flat_labels
+
+        # If sequence length > 1, create overlapping sequences
+        else:
+            num_sequences = len(flat_features) - sequence_length + 1
+            if num_sequences <= 0:
+                return None, None
+
+            # Create sequences of features
+            # Using a loop for clarity; for very large data, stride_tricks would be faster
+            sequential_features = []
+            for i in range(num_sequences):
+                sequential_features.append(flat_features[i : i + sequence_length])
+
+            # The label for each sequence is the label of its LAST element
+            sequential_labels = flat_labels[sequence_length - 1 :]
+
+            return np.array(sequential_features), sequential_labels
 
     def visualize_selected_trajectory(self):
         """Clears the canvas and draws boundaries, trajectories, and predictions."""
@@ -386,7 +459,7 @@ class App(tk.Tk):
                 true_coords[:, 1],
                 "b-o",
                 markersize=4,
-                label="True Segment",
+                label="True Segment Endpoints",  # MODIFIED Label
                 zorder=3,
             )
             self.ax.plot(
