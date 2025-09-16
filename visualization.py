@@ -4,6 +4,7 @@ import warnings
 import sys
 import os
 import numpy as np
+from filter import smooth_coords
 
 import src.config as config
 
@@ -453,6 +454,10 @@ class App(tk.Tk):
 
             true_coords = polar_to_cartesian(self.true_labels)
             pred_coords = polar_to_cartesian(self.predictions)
+            pred_coords = smooth_coords(
+                pred_coords, method="adaptive", min_window=50, max_window=100, polyorder=3
+            )
+            # 想固定窗口：pred_coords = smooth_coords(pred_coords, method="fixed", window_length=11, polyorder=3)
 
             self.ax.plot(
                 true_coords[:, 0],
