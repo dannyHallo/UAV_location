@@ -67,6 +67,39 @@ class DetectingRegionInfo:
         beta3 = np.arctan2(delta[1], delta[0])
         return rho3, beta3
 
+    # === 以 T 为原点、X 轴沿 T→RX1 的局部坐标系工具 ===
+    def get_tx_rx1_basis(self):
+        """
+        返回以 T 为原点、X 轴沿 T→RX1、Y 轴为逆时针 90° 的正交基 (u, v)。
+        u 为 X 轴单位向量，v 为 Y 轴单位向量。
+        """
+        u = self.receiver_position_1 - self.transmittor_position
+        nu = np.linalg.norm(u)
+        if nu < 1e-12:
+            u = np.array([1.0, 0.0], dtype=float)
+        else:
+            u = u / nu
+        v = np.array([-u[1], u[0]], dtype=float)
+        return u, v
+
+    def transform_point_to_tx_rx1(self, p: np.ndarray) -> np.ndarray:
+        """
+        将全局坐标点 p 变换到 (T 为原点, T→RX1 为 +X) 的局部坐标系。
+        """
+        p = np.asarray(p, dtype=float)
+        u, v = self.get_tx_rx1_basis()
+        R = np.stack([u, v], axis=1)  # 列为全局基 u,v
+        return R.T @ (p - self.transmittor_position)
+
+    def transform_points_to_tx_rx1(self, P: np.ndarray) -> np.ndarray:
+        """
+        向量化：将形如 (N,2) 的点集变换到局部坐标系。
+        """
+        P = np.asarray(P, dtype=float)
+        u, v = self.get_tx_rx1_basis()
+        R = np.stack([u, v], axis=1)  # (2,2)
+        return (P - self.transmittor_position) @ R
+
     def draw_figure(self, ax=None, color="r", title=None):
         """
         Draws the detecting region quadrilateral.

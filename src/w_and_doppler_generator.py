@@ -85,31 +85,37 @@ def _calculate_angle_with_x_axis(x, y, a, b):
 
 # 继续使用之前定义的点和距离计算方法
 def _get_angle_theta(detecting_region_info, coord_a, coord_b):
+    # 在以 T 为原点、T→RX1 为 X 轴的局部坐标系下计算
+    a_local = detecting_region_info.transform_point_to_tx_rx1(coord_a)
+    b_local = detecting_region_info.transform_point_to_tx_rx1(coord_b)
+    v1_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v1)
+    v2_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v2)
+    v3_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v3)
+    v4_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v4)
 
-    # 计算夹角
     n_theta_1a = _calculate_angle_with_x_axis(
-        detecting_region_info.v1[0], detecting_region_info.v1[1], coord_a[0], coord_a[1]
+        v1_local[0], v1_local[1], a_local[0], a_local[1]
     )
     n_theta_1b = _calculate_angle_with_x_axis(
-        detecting_region_info.v1[0], detecting_region_info.v1[1], coord_b[0], coord_b[1]
+        v1_local[0], v1_local[1], b_local[0], b_local[1]
     )
     n_theta_2a = _calculate_angle_with_x_axis(
-        detecting_region_info.v2[0], detecting_region_info.v2[1], coord_a[0], coord_a[1]
+        v2_local[0], v2_local[1], a_local[0], a_local[1]
     )
     n_theta_2b = _calculate_angle_with_x_axis(
-        detecting_region_info.v2[0], detecting_region_info.v2[1], coord_b[0], coord_b[1]
+        v2_local[0], v2_local[1], b_local[0], b_local[1]
     )
     n_theta_3a = _calculate_angle_with_x_axis(
-        detecting_region_info.v3[0], detecting_region_info.v3[1], coord_a[0], coord_a[1]
+        v3_local[0], v3_local[1], a_local[0], a_local[1]
     )
     n_theta_3b = _calculate_angle_with_x_axis(
-        detecting_region_info.v3[0], detecting_region_info.v3[1], coord_b[0], coord_b[1]
+        v3_local[0], v3_local[1], b_local[0], b_local[1]
     )
     n_theta_4a = _calculate_angle_with_x_axis(
-        detecting_region_info.v4[0], detecting_region_info.v4[1], coord_a[0], coord_a[1]
+        v4_local[0], v4_local[1], a_local[0], a_local[1]
     )
     n_theta_4b = _calculate_angle_with_x_axis(
-        detecting_region_info.v4[0], detecting_region_info.v4[1], coord_b[0], coord_b[1]
+        v4_local[0], v4_local[1], b_local[0], b_local[1]
     )
 
     theta1 = abs(n_theta_1a - n_theta_1b)
@@ -118,10 +124,10 @@ def _get_angle_theta(detecting_region_info, coord_a, coord_b):
     theta4 = abs(n_theta_4a - n_theta_4b)
 
     return [
-        np.radians(theta1),  # theta1
-        np.radians(theta2),  # theta2
-        np.radians(theta3),  # theta3
-        np.radians(theta4),  # theta4
+        np.radians(theta1),
+        np.radians(theta2),
+        np.radians(theta3),
+        np.radians(theta4),
     ]
 
 

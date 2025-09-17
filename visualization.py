@@ -61,6 +61,8 @@ class App(tk.Tk):
         self.outer_vertices = []
         self.inner_vertices = []
         self.detecting_region_info = None
+        # 是否在局部坐标系(T 为原点，T→RX1 为 X 轴)中绘图
+        self.plot_in_local_frame = True
         self.model = None
         self.device = None
         self.predictions = None
@@ -400,11 +402,17 @@ class App(tk.Tk):
         """Clears the canvas and draws boundaries, trajectories, and predictions."""
         self.ax.clear()
 
+        def to_plot_coords(points):
+            points = np.asarray(points, dtype=float)
+            if self.plot_in_local_frame and self.detecting_region_info is not None:
+                return self.detecting_region_info.transform_points_to_tx_rx1(points)
+            return points
+
         # 1. Draw boundaries
         if self.outer_vertices:
             self.ax.add_patch(
                 Polygon(
-                    self.outer_vertices,
+                    to_plot_coords(self.outer_vertices),
                     fill=False,
                     edgecolor="k",
                     lw=2,
@@ -414,7 +422,7 @@ class App(tk.Tk):
         if self.inner_vertices:
             self.ax.add_patch(
                 Polygon(
-                    self.inner_vertices,
+                    to_plot_coords(self.inner_vertices),
                     fill=False,
                     edgecolor="g",
                     ls="--",
@@ -438,8 +446,8 @@ class App(tk.Tk):
             if trajectory.trajectory:
                 path_points = np.array(trajectory.trajectory)
                 self.ax.plot(
-                    path_points[:, 0],
-                    path_points[:, 1],
+                    to_plot_coords(path_points)[:, 0],
+                    to_plot_coords(path_points)[:, 1],
                     "-",
                     color="lightgray",
                     lw=1.5,
@@ -449,27 +457,41 @@ class App(tk.Tk):
 
             def polar_to_cartesian(data):
                 rho, sin_theta, cos_theta = data[:, 0], data[:, 1], data[:, 2]
-                ref_x, ref_y = self.detecting_region_info.transmittor_position
-                return np.vstack((ref_x + rho * cos_theta, ref_y + rho * sin_theta)).T
+                x_local = rho * cos_theta
+                y_local = rho * sin_theta
+                points_local = np.stack([x_local, y_local], axis=1)
+                if self.plot_in_local_frame:
+                    # 直接在局部坐标下绘制
+                    return points_local
+                else:
+                    # 转回全局坐标后绘制
+                    u, v = self.detecting_region_info.get_tx_rx1_basis()
+                    R = np.stack([u, v], axis=1)
+                    T = self.detecting_region_info.transmittor_position
+                    return T + points_local @ R
 
             true_coords = polar_to_cartesian(self.true_labels)
             pred_coords = polar_to_cartesian(self.predictions)
             pred_coords = smooth_coords(
-                pred_coords, method="adaptive", min_window=50, max_window=100, polyorder=3
+                pred_coords,
+                method="adaptive",
+                min_window=50,
+                max_window=100,
+                polyorder=3,
             )
             # 想固定窗口：pred_coords = smooth_coords(pred_coords, method="fixed", window_length=11, polyorder=3)
 
             self.ax.plot(
-                true_coords[:, 0],
-                true_coords[:, 1],
+                to_plot_coords(true_coords)[:, 0],
+                to_plot_coords(true_coords)[:, 1],
                 "b-o",
                 markersize=4,
                 label="True Segment Endpoints",  # MODIFIED Label
                 zorder=3,
             )
             self.ax.plot(
-                pred_coords[:, 0],
-                pred_coords[:, 1],
+                to_plot_coords(pred_coords)[:, 0],
+                to_plot_coords(pred_coords)[:, 1],
                 "r--x",
                 markersize=4,
                 label="Predicted Path",
@@ -478,8 +500,14 @@ class App(tk.Tk):
 
             for t_coord, p_coord in zip(true_coords, pred_coords):
                 self.ax.plot(
-                    [t_coord[0], p_coord[0]],
-                    [t_coord[1], p_coord[1]],
+                    [
+                        to_plot_coords([t_coord, p_coord])[0, 0],
+                        to_plot_coords([t_coord, p_coord])[1, 0],
+                    ],
+                    [
+                        to_plot_coords([t_coord, p_coord])[0, 1],
+                        to_plot_coords([t_coord, p_coord])[1, 1],
+                    ],
                     color="gray",
                     alpha=0.5,
                     lw=0.8,
@@ -490,8 +518,8 @@ class App(tk.Tk):
             if trajectory.trajectory:
                 path_points = np.array(trajectory.trajectory)
                 self.ax.plot(
-                    path_points[:, 0],
-                    path_points[:, 1],
+                    to_plot_coords(path_points)[:, 0],
+                    to_plot_coords(path_points)[:, 1],
                     "b-",
                     lw=2,
                     label=trajectory.name,
@@ -499,8 +527,8 @@ class App(tk.Tk):
             if trajectory.key_points:
                 key_points = np.array(trajectory.key_points)
                 self.ax.scatter(
-                    key_points[:, 0],
-                    key_points[:, 1],
+                    to_plot_coords(key_points)[:, 0],
+                    to_plot_coords(key_points)[:, 1],
                     color="purple",
                     s=80,
                     marker="o",
@@ -511,8 +539,9 @@ class App(tk.Tk):
 
         # 4. Final plot adjustments
         if self.outer_vertices:
-            all_x = [v[0] for v in self.outer_vertices]
-            all_y = [v[1] for v in self.outer_vertices]
+            ov = to_plot_coords(self.outer_vertices)
+            all_x = [v[0] for v in ov]
+            all_y = [v[1] for v in ov]
             padding = max((max(all_x) - min(all_x)), (max(all_y) - min(all_y))) * 0.15
             self.ax.set_xlim(min(all_x) - padding, max(all_x) + padding)
             self.ax.set_ylim(min(all_y) - padding, max(all_y) + padding)
@@ -520,8 +549,8 @@ class App(tk.Tk):
         self.ax.set_title(
             f"Trajectory Visualization (Region Seed: {self.seed_var.get()})"
         )
-        self.ax.set_xlabel("X-coordinate")
-        self.ax.set_ylabel("Y-coordinate")
+        self.ax.set_xlabel("X (TX→RX1)")
+        self.ax.set_ylabel("Y (CCW 90°)")
         self.ax.grid(True)
         self.ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
         self.ax.set_aspect("equal", adjustable="box")

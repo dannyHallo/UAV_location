@@ -85,12 +85,12 @@ def calculate_distances(train_label, detecting_region_info):
 
 
 def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_a):
-    ref = detecting_region_info.transmittor_position
-    phi = np.arctan2(coord_a[1] - ref[1], coord_a[0] - ref[0])
-    # change range from -pi to pi to 0 to 2pi
+    # 使用以 T 为原点、T→RX1 为 X 轴的局部坐标系
+    p_local = detecting_region_info.transform_point_to_tx_rx1(coord_a)
+    phi = np.arctan2(p_local[1], p_local[0])
     if phi < 0:
         phi += 2 * np.pi
-    d = np.sqrt((coord_a[0] - ref[0]) ** 2 + (coord_a[1] - ref[1]) ** 2)
+    d = np.hypot(p_local[0], p_local[1])
     return [d, np.sin(phi), np.cos(phi)]
 
 
