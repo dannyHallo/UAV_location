@@ -147,40 +147,57 @@ def generate_detecting_region_infos(
     detecting_region_infos = []
     for quad_points in all_quadrilaterals:
         # Convert to numpy array for calculations
-        points_arr = np.array(quad_points)
+        points_arr = np.array(quad_points, dtype=float)
 
-        # 1. Calculate the centroid of the four points. This will be our reference
-        #    point for angular sorting to ensure the vertices are ordered correctly.
-        centroid = np.mean(points_arr, axis=0)
+        # The transmitter is fixed at (0,0)
+        T = np.array([0.0, 0.0], dtype=float)
 
-        # 2. Sort the points counter-clockwise around the centroid.
-        #    This guarantees that when connected sequentially, they form a simple
-        #    (non-self-intersecting) polygon.
-        sorted_points = sorted(
-            points_arr,
+        # Choose R1 as the point with the largest positive projection on +X (tie-break by max norm)
+        # This enforces that the local X axis will align with T->R1.
+        candidates = [p for p in points_arr if not np.allclose(p, T)]
+        if len(candidates) < 3:
+            continue
+        # pick the one with maximal x (and then by norm) as R1
+        candidates_sorted = sorted(
+            candidates, key=lambda p: (p[0], np.hypot(p[0], p[1])), reverse=True
+        )
+        R1 = np.array(candidates_sorted[0], dtype=float)
+
+        # The other two receivers
+        others = [p for p in candidates if not np.allclose(p, R1)]
+        if len(others) != 2:
+            continue
+        P2 = np.array(others[0], dtype=float)
+        P3 = np.array(others[1], dtype=float)
+
+        # Build local orthonormal basis from T->R1
+        vec_TR1 = R1 - T
+        norm_TR1 = np.hypot(vec_TR1[0], vec_TR1[1])
+        if norm_TR1 < 1e-8:
+            # degenerate, skip
+            continue
+        u = vec_TR1 / norm_TR1  # +X (unit)
+        v = np.array([-u[1], u[0]], float)  # +Y (CCW 90°)
+        R = np.stack([u, v], axis=1)  # columns are basis vectors
+
+        # Transform points to local frame: p_local = R^T (p - T)
+        def to_local(p):
+            return (p - T) @ R
+
+        T_local = to_local(T)
+        R1_local = to_local(R1)
+        P2_local = to_local(P2)
+        P3_local = to_local(P3)
+
+        # Ensure counter-clockwise order starting from T, then R1.
+        pts_local = [T_local, R1_local, P2_local, P3_local]
+        centroid = np.mean(np.stack(pts_local, axis=0), axis=0)
+        # sort P2/P3 CCW around centroid, keeping T at index 0 and R1 at index 1
+        tail = sorted(
+            [P2_local, P3_local],
             key=lambda p: np.arctan2(p[1] - centroid[1], p[0] - centroid[0]),
         )
-
-        # 3. The transmitter is fixed at (0,0). Find its index in the sorted list.
-        origin = np.array([0.0, 0.0])
-        origin_index = -1
-        for i, p in enumerate(sorted_points):
-            if np.allclose(p, origin):
-                origin_index = i
-                break
-
-        if origin_index == -1:
-            # This should not happen given the generation logic, but as a safeguard:
-            print("Warning: Origin (0,0) not found in generated points. Skipping.")
-            continue
-
-        # 4. Assign the transmitter and receivers in their new sorted order.
-        #    v1 is the transmitter. v2, v3, v4 are the subsequent vertices
-        #    in counter-clockwise order. This ensures the polygon is drawn correctly.
-        v1 = sorted_points[origin_index]
-        v2 = sorted_points[(origin_index + 1) % 4]
-        v3 = sorted_points[(origin_index + 2) % 4]
-        v4 = sorted_points[(origin_index + 3) % 4]
+        v1, v2, v3, v4 = T_local, R1_local, tail[0], tail[1]
 
         detecting_region_infos.append(
             detecting_region_info.DetectingRegionInfo(

@@ -1,190 +1,261 @@
+# ============================================================
+# Physics-Informed UAV Locator  ——  **Robust GN 改进版**
+# ------------------------------------------------------------
+#  1) Huber-IRLS + Tikhonov + 单步 Gauss–Newton  → Δp_lin
+#  2) Residual MLP (SE-ResMLP)                  → Δp_corr
+#  3) 可选 LSTM                                 → 时序滤波
+# ============================================================
+
 import math
+from typing import Tuple, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# ---------------- 全局常量 -----------------
+DIM = 2         # 空间维度（2 or 3）
+LAMBDA = 0.06   # 载波波长 (m)
+C0 = 3.0e8      # 光速 (m/s)
+FC = C0 / LAMBDA
 
-# =============== 1. 🍃 轻量 SE-ResMLP 基本块 ===================
-class SEResBlock(nn.Module):
+# ============================================================
+# 1.  物理显式层   ——  Huber-IRLS + Tikhonov + GN
+# ============================================================
+
+def _huber_weight(r: torch.Tensor, delta: float = 0.3) -> torch.Tensor:
     """
-    ① Linear → GELU → LayerNorm → Dropout
-    ② 残差连接
-    ③ Squeeze-and-Excitation (通道注意力)
+    Huber 权:
+        w = 1                    , |r| <= δ
+          = δ / (|r| + ε)        , |r| >  δ
     """
-
-    def __init__(
-        self, in_dim: int, hidden_dim: int, drop: float = 0.15, se_ratio: float = 0.25
-    ):
-        super().__init__()
-        self.fc1 = nn.Linear(in_dim, hidden_dim, bias=False)
-        self.act = nn.GELU()
-        self.norm = nn.LayerNorm(hidden_dim)
-        self.drop1 = nn.Dropout(drop)
-
-        # SE
-        se_hidden = max(8, int(hidden_dim * se_ratio))
-        self.se_reduce = nn.Linear(hidden_dim, se_hidden, bias=False)
-        self.se_act = nn.SiLU()
-        self.se_expand = nn.Linear(se_hidden, hidden_dim, bias=False)
-
-        # 尾部投影，保持维度不变才能残差
-        self.fc2 = nn.Linear(hidden_dim, in_dim, bias=False)
-        self.drop2 = nn.Dropout(drop)
-
-        # 层级残差
-        self.skip = nn.Identity()
-
-        # 初始化
-        nn.init.kaiming_normal_(self.fc1.weight, a=math.sqrt(5))
-        nn.init.kaiming_normal_(self.fc2.weight, a=math.sqrt(5))
-
-    def forward(self, x):
-        residual = self.skip(x)  # (B, in_dim)
-
-        y = self.fc1(x)  # (B, hidden)
-        y = self.act(y)
-        y = self.norm(y)
-        y = self.drop1(y)
-
-        # ---- SE ----
-        w = self.se_reduce(y).mean(0, keepdim=True)  # Squeeze → (1, se_hidden)
-        w = self.se_act(w)
-        w = self.se_expand(w).sigmoid()  # Excitation → (1, hidden)
-        y = y * w  # 注意力
-
-        y = self.fc2(y)
-        y = self.drop2(y)
-
-        return residual + y  # 残差输出
+    abs_r = r.abs()
+    w = torch.where(abs_r <= delta,
+                    torch.ones_like(r),
+                    delta / (abs_r + 1e-12))
+    return w
 
 
-# =============== 2. 🌟 改进 UAV 模型 (Original for sequence_length=1) ============================
-class UavModel(nn.Module):
+class LeastSquaresLayer(nn.Module):
     """
-    输入维度: 6
-    输出维度: 3   [ρ, sinθ, cosθ]
-    总参数量 ~45 K，显著小于旧 DnnModule1 (~110 K)，
-    但实测在同一数据集上 Top-1 Cartesian 误差可下降 5-15 %。
+    Robust Least-Squares 物理层
+    输入:
+        p_prev : (B,Dim)      上一时刻 UAV 坐标 (若无填 0)
+        feats  : (B,6)        [φ1,φ2,φ3,   fd1,fd2,fd3]
+    常量:
+        T      : (Dim,)       发射机坐标
+        R      : (3,Dim)      三只接收机坐标
+    输出:
+        Δp_lin : (B,Dim)      粗位移 (一次 GN)
     """
 
     def __init__(
         self,
-        in_dim: int = 6,
-        embed_dim: int = 96,
-        depth: int = 5,
-        hidden_ratio: float = 2.5,
-        drop: float = 0.15,
+        T: torch.Tensor,
+        R: torch.Tensor,
+        huber_delta: float = 0.3,
+        alpha: float = 1e-3,
     ):
         super().__init__()
-        self.embed = nn.Sequential(nn.Linear(in_dim, embed_dim, bias=False), nn.GELU())
+        self.register_buffer("T", T.float())
+        self.register_buffer("R", R.float())
+        self.delta = huber_delta
+        self.alpha = alpha
 
-        hidden_dim = int(embed_dim * hidden_ratio)
+    # ---------- 内部工具 ---------- #
+    @staticmethod
+    def _unit(vec: torch.Tensor) -> torch.Tensor:
+        return vec / vec.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
+    def _gn_step(self, J: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """
+        单步 Gauss–Newton with Huber-IRLS & Tikhonov
+        J : (B,3,Dim), y : (B,3)
+        return (B,Dim)
+        """
+        # 1) Huber 权
+        w = _huber_weight(-y, self.delta)           # 初始残差取 0 → r = -y
+        WJ = w.unsqueeze(-1) * J                    # (B,3,Dim)
+        Wy = w * y                                  # (B,3)
+
+        # 2) 正则化解  (JᵀJ+αI)⁻¹ Jᵀy
+        JTJ = WJ.transpose(1, 2) @ WJ               # (B,Dim,Dim)
+        JTJ_reg = JTJ + self.alpha * torch.eye(DIM, device=J.device)
+        JTy = WJ.transpose(1, 2) @ Wy.unsqueeze(-1)  # (B,Dim,1)
+
+        # Cholesky 求解
+        L = torch.linalg.cholesky(JTJ_reg)          # (B,Dim,Dim)
+        sol = torch.cholesky_solve(JTy, L).squeeze(-1)  # (B,Dim)
+        return sol
+
+    # ---------- 前向 ---------- #
+    def forward(self, p_prev: torch.Tensor, feats: torch.Tensor) -> torch.Tensor:
+        """
+        返回 Δp_lin  (B,Dim)
+        """
+        phi = feats[:, :3]     # 相位差 rad
+        fD  = feats[:, 3:]     # 多普勒 Hz
+
+        # ---------- 构造 J ----------
+        u_AT = self._unit(p_prev - self.T)                  # (B,Dim)
+        u_AR = self._unit(p_prev.unsqueeze(1) - self.R)     # (B,3,Dim)
+        J = u_AT.unsqueeze(1) + u_AR                        # (B,3,Dim)
+
+        # ---------- 右端 ----------
+        d = LAMBDA * phi / (4.0 * math.pi)                  # (B,3)
+        # 如需速度同法构 b = -λ fD
+
+        # ---------- 解 Δp ----------
+        delta_p = self._gn_step(J, d)                       # (B,Dim)
+        return delta_p
+
+
+# ============================================================
+# 2.  SE-ResMLP Block
+# ============================================================
+
+class SEResBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int,
+                 drop: float = 0.1, se_ratio: float = 0.25):
+        super().__init__()
+        self.fc1  = nn.Linear(in_dim, hidden_dim, bias=False)
+        self.act  = nn.GELU()
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.d1   = nn.Dropout(drop)
+
+        se_hid = max(8, int(hidden_dim * se_ratio))
+        self.se_r = nn.Linear(hidden_dim, se_hid, bias=False)
+        self.se_a = nn.SiLU()
+        self.se_e = nn.Linear(se_hid, hidden_dim, bias=False)
+
+        self.fc2 = nn.Linear(hidden_dim, in_dim, bias=False)
+        self.d2  = nn.Dropout(drop)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        res = x
+        y = self.d1(self.norm(self.act(self.fc1(x))))
+        # SE
+        w = self.se_e(self.se_a(self.se_r(y.mean(0, keepdim=True)))).sigmoid()
+        y = y * w
+        y = self.d2(self.fc2(y))
+        return res + y
+
+
+# ============================================================
+# 3.  误差补偿 MLP
+# ============================================================
+
+class ResidualMLP(nn.Module):
+    def __init__(
+        self,
+        dim_in: int,
+        embed: int = 64,
+        depth: int = 4,
+        hid_ratio: float = 2.5,
+        drop: float = 0.1,
+    ):
+        super().__init__()
+        self.embed = nn.Linear(dim_in, embed, bias=False)
+        hidden = int(embed * hid_ratio)
         self.blocks = nn.Sequential(
-            *[SEResBlock(embed_dim, hidden_dim, drop) for _ in range(depth)]
+            *[SEResBlock(embed, hidden, drop) for _ in range(depth)]
         )
+        self.head = nn.Linear(embed, DIM)
 
-        self.head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, 128),
-            nn.GELU(),
-            nn.Linear(128, 3),  # 直接输出 ρ, sinθ, cosθ
-        )
-
-        # 2-bit Quantization friendly init
-        for m in self.modules():
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.zeros_(m.bias)
-
-    # torch>=2.0 可以一键 compile 提速 5-30 %
-    def forward(self, x):
-        x = self.embed(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = F.gelu(self.embed(x))
         x = self.blocks(x)
         return self.head(x)
 
 
-# =============== 3. 🚀 New UAV Model with LSTM for Sequences ============================
-class UavModelWithLSTM(nn.Module):
-    """
-    A sequential UAV model that uses an LSTM to process trajectory sequences.
+# ============================================================
+# 4.  单帧 PINN 模型
+# ============================================================
 
-    Architecture:
-    1.  An embedding layer processes each time step's features independently.
-    2.  An LSTM layer processes the sequence of embedded features.
-    3.  The final hidden state of the LSTM is taken as the sequence's summary.
-    4.  A prediction head maps this summary to the final output [ρ, sinθ, cosθ].
+class PinUavModel(nn.Module):
+    """
+    输入 :
+        feats  (B,6)    三相位差 + 三多普勒
+        p_prev (B,Dim)  上一帧坐标 (无则 None)
+    输出 :
+        p_hat  (B,Dim)  当前位置估计
+    """
+
+    def __init__(self, T: torch.Tensor, R: torch.Tensor):
+        super().__init__()
+        self.ls = LeastSquaresLayer(T, R)
+        self.refine = ResidualMLP(dim_in=6 + DIM)
+
+    def forward(
+        self,
+        feats: torch.Tensor,
+        p_prev: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        if p_prev is None:
+            p_prev = torch.zeros(feats.size(0), DIM, device=feats.device)
+
+        Δp_lin = self.ls(p_prev, feats)                  # 物理层
+        inp    = torch.cat([feats, Δp_lin], dim=-1)
+        Δp_corr = self.refine(inp)                       # MLP 校正
+        p_hat   = p_prev + Δp_lin + Δp_corr
+        return p_hat
+
+
+# ============================================================
+# 5.  时序版本  (LSTM + PINN)
+# ============================================================
+
+class PinUavSeqModel(nn.Module):
+    """
+    输入 : feats (B,Seq,6)
+    输出 : p_hat (B,Seq,Dim)
     """
 
     def __init__(
         self,
-        in_dim: int = 6,
-        embed_dim: int = 96,
-        lstm_hidden_size: int = 128,
+        T: torch.Tensor,
+        R: torch.Tensor,
+        lstm_hidden: int = 128,
         lstm_layers: int = 2,
-        lstm_dropout: float = 0.1,
+        drop: float = 0.1,
     ):
-        """
-        Args:
-            in_dim (int): Dimension of input features per time step (e.g., 6).
-            embed_dim (int): Dimension to embed each time step's features into.
-            lstm_hidden_size (int): The number of features in the LSTM hidden state.
-            lstm_layers (int): Number of recurrent LSTM layers.
-            lstm_dropout (float): Dropout probability for LSTM layers (if lstm_layers > 1).
-        """
         super().__init__()
-
-        # 1. Embedding Layer: Processes each time step from (in_dim) to (embed_dim)
-        self.embed = nn.Linear(in_dim, embed_dim, bias=False)
-
-        # 2. LSTM Layer: Processes the sequence of embedded features.
-        #    batch_first=True is crucial as our data is shaped (batch, sequence_length, features).
+        self.ls_layer = LeastSquaresLayer(T, R)
+        self.embed = nn.Linear(6 + DIM, 96, bias=False)
         self.lstm = nn.LSTM(
-            input_size=embed_dim,
-            hidden_size=lstm_hidden_size,
+            input_size=96,
+            hidden_size=lstm_hidden,
             num_layers=lstm_layers,
             batch_first=True,
-            dropout=lstm_dropout if lstm_layers > 1 else 0,
+            dropout=drop if lstm_layers > 1 else 0.0,
         )
+        self.head = nn.Linear(lstm_hidden, DIM)
 
-        # 3. Prediction Head: Maps the final LSTM hidden state to the output.
-        self.head = nn.Sequential(
-            nn.LayerNorm(lstm_hidden_size),
-            nn.Linear(lstm_hidden_size, 128),
-            nn.GELU(),
-            nn.Linear(128, 3),  # Output: [ρ, sinθ, cosθ]
-        )
+    def forward(
+        self,
+        feats: torch.Tensor,
+        p_prev0: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        B, S, _ = feats.shape
+        if p_prev0 is None:
+            p_prev0 = torch.zeros(B, DIM, device=feats.device)
 
-        # Initialization
-        for m in self.modules():
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.zeros_(m.bias)
+        # -------- 物理层游程 (Δp_lin) & LSTM 输入 --------
+        p_prev = p_prev0
+        lstm_in = []
+        Δp_ls_all = []
+        for t in range(S):
+            Δp_ls_t = self.ls_layer(p_prev, feats[:, t])
+            Δp_ls_all.append(Δp_ls_t)
+            lstm_in.append(torch.cat([feats[:, t], Δp_ls_t], dim=-1))
+            p_prev = p_prev + Δp_ls_t
+        lstm_in = torch.stack(lstm_in, dim=1)      # (B,S,6+Dim)
+        Δp_ls_all = torch.stack(Δp_ls_all, dim=1)  # (B,S,Dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for the sequential model.
+        # -------- LSTM 校正 --------
+        x = F.gelu(self.embed(lstm_in))
+        x, _ = self.lstm(x)
+        Δp_corr = self.head(x)                     # (B,S,Dim)
 
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, sequence_length, in_dim).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, 3).
-        """
-        # x shape: (batch, seq_len, in_dim)
-
-        # 1. Apply embedding to each time step
-        x = self.embed(x)  # -> (batch, seq_len, embed_dim)
-        x = F.gelu(x)
-
-        # 2. Pass the sequence through the LSTM
-        # lstm_out contains the hidden state for each time step.
-        # (h_n, c_n) contains the final hidden and cell states.
-        lstm_out, (h_n, c_n) = self.lstm(x)
-        # lstm_out shape: (batch, seq_len, lstm_hidden_size)
-
-        # 3. We only need the output from the last time step, as it summarizes the sequence.
-        last_hidden_state = lstm_out[:, -1, :]  # -> (batch, lstm_hidden_size)
-
-        # 4. Pass the summary through the prediction head
-        output = self.head(last_hidden_state)  # -> (batch, 3)
-
-        return output
+        p_hat = p_prev0.unsqueeze(1) + Δp_ls_all.cumsum(dim=1) + Δp_corr
+        return p_hat

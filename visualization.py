@@ -1,12 +1,25 @@
+#!/usr/bin/env python3
+# ============================================================
+#  Trajectory Visualizer & Robust-PINN Predictor  (Tkinter GUI)
+# ------------------------------------------------------------
+#  • 支持 PinUavModel / PinUavSeqModel
+#  • 自动剥离 state_dict 前缀： base_model.|model.|module.
+#  • strict=False 宽容加载，避免 missing / unexpected key 报错
+# ============================================================
+
+import os, sys, warnings, pathlib, math
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import warnings
-import sys
-import os
-import numpy as np
-from filter import smooth_coords
 
-import src.config as config
+import numpy as np
+
+# ─────────── 第三方依赖检查 ───────────
+try:
+    import scipy        # 用于 smooth_coords
+except ModuleNotFoundError as e:
+    tk.messagebox.showerror("Dependency Error",
+                            f"Required library missing: {e}")
+    sys.exit(1)
 
 # suppress the FutureWarning about torch.load untrusted models
 warnings.filterwarnings(
@@ -14,27 +27,25 @@ warnings.filterwarnings(
     message=".*You are using torch.load with weights_only=False.*",
 )
 
-# Ensure the 'src' directory is in the Python path to import modules correctly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
-
-# Matplotlib imports for embedding in Tkinter
+# ─────────── Matplotlib 内嵌 ───────────
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Polygon
 
-# Import necessary functions and classes from the provided source files
+# ─────────── 工程内模块 ───────────
+sys.path.append(os.path.abspath("./"))  # 确保可以 import src.*
+
+import src.config as config
 from src.detecting_region_info_generator import generate_detecting_region_infos
 from src.trajectory_generator import (
     generate_trajectories_in_region,
     generate_lines_from_trajectory,
 )
+from filter import smooth_coords
 
-# --- Imports for Model Prediction ---
 try:
     import torch
-
-    # MODIFIED: Import both models
-    from src.uav_model import UavModel, UavModelWithLSTM
+    from src.uav_model import PinUavModel, PinUavSeqModel
     import src.doppler_info as doppler_info_module
     from src.get_phi_info import get_angle_phi
     from src.w_and_doppler_generator import generate_w_and_doppler
@@ -43,530 +54,294 @@ try:
     TORCH_AVAILABLE = True
 except ImportError as e:
     TORCH_AVAILABLE = False
-    IMPORT_ERROR_MSG = f"A required library for prediction is missing: {e}\n\nPlease ensure PyTorch and all project dependencies are installed. Prediction will be disabled."
+    IMPORT_ERROR_MSG = (
+        f"A required library for prediction is missing: {e}\n\n"
+        "Please ensure PyTorch and all project dependencies are installed. "
+        "Prediction will be disabled."
+    )
 
+# ============================================================
+#                 utils: strip_state_dict_prefix
+# ============================================================
+def strip_prefix_from_state_dict(state_dict, prefixes=("base_model.", "model.", "module.")):
+    """
+    把 state_dict 里以 prefixes 任一字符串开头的前缀去掉。
+    """
+    if isinstance(prefixes, str):
+        prefixes = (prefixes,)
+    out = {}
+    for k, v in state_dict.items():
+        for p in prefixes:
+            if k.startswith(p):
+                k = k[len(p):]
+                break
+        out[k] = v
+    return out
 
+# ============================================================
+#                         Tk GUI
+# ============================================================
 class App(tk.Tk):
-    """
-    An interactive Tkinter application to generate, visualize, and predict trajectories.
-    """
-
     def __init__(self):
         super().__init__()
-        self.title("Trajectory Visualizer and Predictor")
-        self.geometry("950x750")
+        self.title("Trajectory Visualizer & Predictor")
+        self.geometry("1020x770")
 
-        # --- State variables ---
+        # ─────────── 状态变量 ───────────
         self.trajectories = []
-        self.outer_vertices = []
-        self.inner_vertices = []
+        self.outer_vertices, self.inner_vertices = [], []
         self.detecting_region_info = None
-        # 是否在局部坐标系(T 为原点，T→RX1 为 X 轴)中绘图
+        self.predictions, self.true_labels = None, None
+        self.model, self.device = None, None
         self.plot_in_local_frame = True
-        self.model = None
-        self.device = None
-        self.predictions = None
-        self.true_labels = None
-
-        # status bar variable
         self.status_var = tk.StringVar(value="Welcome.")
 
-        # --- Top frame for generation controls ---
-        gen_control_frame = tk.Frame(self)
-        gen_control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
-
-        tk.Label(gen_control_frame, text="Seed:", font=("Helvetica", 10)).pack(
-            side=tk.LEFT, padx=(0, 5)
-        )
+        # ─────────── 顶栏：生成参数 ───────────
+        ctrl = tk.Frame(self); ctrl.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        tk.Label(ctrl, text="Seed").pack(side=tk.LEFT)
         self.seed_var = tk.StringVar(value=config.visualize_line_seed)
-        self.seed_entry = tk.Entry(
-            gen_control_frame, textvariable=self.seed_var, width=8
-        )
-        self.seed_entry.pack(side=tk.LEFT)
+        tk.Entry(ctrl, textvariable=self.seed_var, width=8).pack(side=tk.LEFT, padx=4)
 
-        tk.Label(gen_control_frame, text="Num Lines:", font=("Helvetica", 10)).pack(
-            side=tk.LEFT, padx=(10, 5)
-        )
+        tk.Label(ctrl, text="Lines").pack(side=tk.LEFT)
         self.num_lines_var = tk.StringVar(value="5")
-        self.num_lines_entry = tk.Entry(
-            gen_control_frame, textvariable=self.num_lines_var, width=8
-        )
-        self.num_lines_entry.pack(side=tk.LEFT)
+        tk.Entry(ctrl, textvariable=self.num_lines_var, width=8).pack(side=tk.LEFT, padx=4)
 
-        self.generate_button = tk.Button(
-            gen_control_frame,
-            text="Generate",
-            command=self.run_generation,
-            font=("Helvetica", 10, "bold"),
-        )
-        self.generate_button.pack(side=tk.LEFT, padx=(10, 0))
+        tk.Button(ctrl, text="Generate", width=10,
+                  command=self.run_generation).pack(side=tk.LEFT, padx=10)
 
-        # --- Second frame for visualization and prediction controls ---
-        vis_control_frame = tk.Frame(self)
-        vis_control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
-
-        tk.Label(vis_control_frame, text="Visualize:", font=("Helvetica", 10)).pack(
-            side=tk.LEFT, padx=(0, 5)
-        )
-        self.trajectory_selector = ttk.Combobox(
-            vis_control_frame, state="readonly", width=15
-        )
+        # ─────────── 轨迹选择 & 预测按钮 ───────────
+        visor = tk.Frame(self); visor.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        tk.Label(visor, text="Visualize").pack(side=tk.LEFT)
+        self.trajectory_selector = ttk.Combobox(visor, state="readonly", width=18)
         self.trajectory_selector.pack(side=tk.LEFT)
-        self.trajectory_selector.bind("<<ComboboxSelected>>", self.on_trajectory_select)
+        self.trajectory_selector.bind("<<ComboboxSelected>>", self.on_traj_select)
 
-        self.predict_button = tk.Button(
-            vis_control_frame,
-            text="Predict",
-            command=self.run_prediction,
-            font=("Helvetica", 10, "bold"),
-            state=tk.DISABLED,
-        )
-        self.predict_button.pack(side=tk.LEFT, padx=(20, 0))
+        self.predict_btn = tk.Button(visor, text="Predict", width=10,
+                                     state=tk.DISABLED, command=self.run_prediction)
+        self.predict_btn.pack(side=tk.LEFT, padx=20)
 
-        # --- Third frame for model loading ---
-        model_frame = tk.Frame(self)
-        model_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        # ─────────── 模型加载 ───────────
+        mdl = tk.Frame(self); mdl.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        tk.Button(mdl, text="Load Model", width=12,
+                  command=self.load_model).pack(side=tk.LEFT)
 
-        self.load_model_button = tk.Button(
-            model_frame,
-            text="Load Model",
-            command=self.load_model,
-            font=("Helvetica", 10, "bold"),
-        )
-        self.load_model_button.pack(side=tk.LEFT)
-
-        # NEW: Add Sequence Length entry for model loading
-        tk.Label(model_frame, text="Sequence Length:", font=("Helvetica", 10)).pack(
-            side=tk.LEFT, padx=(10, 5)
-        )
+        tk.Label(mdl, text="SeqLen").pack(side=tk.LEFT, padx=6)
         self.sequence_length_var = tk.StringVar(value=str(config.sequence_length))
-        self.sequence_length_entry = tk.Entry(
-            model_frame, textvariable=self.sequence_length_var, width=5
-        )
-        self.sequence_length_entry.pack(side=tk.LEFT)
+        tk.Entry(mdl, textvariable=self.sequence_length_var, width=5).pack(side=tk.LEFT)
 
-        self.model_path_var = tk.StringVar(value="No model loaded.")
-        tk.Label(
-            model_frame, textvariable=self.model_path_var, font=("Helvetica", 9)
-        ).pack(side=tk.LEFT, padx=(10, 0))
+        self.model_path_var = tk.StringVar(value="No model loaded")
+        tk.Label(mdl, textvariable=self.model_path_var).pack(side=tk.LEFT, padx=10)
 
-        # --- Status bar at the bottom ---
-        status_frame = tk.Frame(self, relief=tk.SUNKEN, bd=1)
-        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        tk.Label(status_frame, textvariable=self.status_var, anchor="w").pack(fill=tk.X)
-
-        # --- Main frame for the Matplotlib plot ---
-        plot_frame = tk.Frame(self, borderwidth=2, relief=tk.SUNKEN)
+        # ─────────── Matplotlib 画布 ───────────
+        plot_frame = tk.Frame(self, relief=tk.SUNKEN, bd=1)
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
-
         self.fig = Figure(figsize=(8, 6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Check for dependencies and perform initial generation
+        # ─────────── 状态栏 ───────────
+        status = tk.Frame(self, relief=tk.SUNKEN, bd=1)
+        status.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Label(status, textvariable=self.status_var, anchor="w").pack(fill=tk.X)
+
         if not TORCH_AVAILABLE:
             messagebox.showwarning("Dependency Error", IMPORT_ERROR_MSG)
         self.run_generation()
 
+    # ========================================================
+    #                 生成 / 加载 / 预测
+    # ========================================================
     def run_generation(self):
-        """Generates a new detecting region and a set of trajectories."""
         try:
-            seed = int(self.seed_var.get())
-            num_lines = int(self.num_lines_var.get())
+            seed = int(self.seed_var.get()); num_lines = int(self.num_lines_var.get())
         except ValueError:
-            messagebox.showerror(
-                "Invalid Input", "Seed and Number of Lines must be integers."
-            )
-            return
+            messagebox.showerror("Invalid Input", "Seed & Lines must be integers."); return
 
-        self.predictions = None
-        self.true_labels = None
+        self.predictions = self.true_labels = None
 
-        region_infos = generate_detecting_region_infos(
-            num_configurations=1, seed=config.region_seed
-        )
+        region_infos = generate_detecting_region_infos(1, seed=config.region_seed)
         if not region_infos:
-            messagebox.showwarning(
-                "Generation Failed",
-                f"Could not generate a valid region for seed {seed}.",
-            )
+            messagebox.showwarning("Generation Failed",
+                                   f"Could not generate region for seed {seed}")
             return
         self.detecting_region_info = region_infos[0]
 
-        self.trajectories, self.outer_vertices, self.inner_vertices = (
-            generate_trajectories_in_region(
-                self.detecting_region_info,
-                num_lines,
-                seed=seed,
-                inner_scale_factor=0.7,
-            )
-        )
+        self.trajectories, self.outer_vertices, self.inner_vertices = \
+            generate_trajectories_in_region(self.detecting_region_info,
+                                            num_lines,
+                                            seed=seed,
+                                            inner_scale_factor=0.7)
 
         if self.trajectories:
             self.trajectory_selector["values"] = [t.name for t in self.trajectories]
             self.trajectory_selector.current(0)
         else:
-            self.trajectory_selector["values"] = []
-            self.trajectory_selector.set("")
-            messagebox.showinfo(
-                "Info", "No valid trajectories could be generated with these settings."
-            )
-
+            self.trajectory_selector["values"] = []; self.trajectory_selector.set("")
         self.visualize_selected_trajectory()
 
+    # ---------- Model loader ----------
     def load_model(self):
-        """Opens a dialog to load a PyTorch model state dictionary."""
         if not TORCH_AVAILABLE:
-            self.status_var.set("⚠️ Cannot load model: PyTorch not installed.")
-            return
-
+            self.status_var.set("⚠️ PyTorch not installed."); return
         try:
-            # MODIFIED: Get sequence length from UI
-            sequence_length = int(self.sequence_length_var.get())
+            seq_len = int(self.sequence_length_var.get())
         except ValueError:
-            messagebox.showerror("Invalid Input", "Sequence Length must be an integer.")
-            return
+            messagebox.showerror("Invalid Input", "Sequence Length must be integer"); return
 
-        filepath = filedialog.askopenfilename(
-            title="Select a PyTorch Model File",
-            filetypes=(("PyTorch Models", "*.pth"), ("All files", "*.*")),
-            initialdir="./models",
-        )
-        if not filepath:
-            return
+        fp = filedialog.askopenfilename(title="Select PyTorch Model",
+                                        filetypes=[("PyTorch Model","*.pth"),("All","*.*")],
+                                        initialdir="./models")
+        if not fp: return
 
         try:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-            # MODIFIED: Instantiate the correct model based on sequence length
-            if sequence_length > 1:
-                self.status_var.set(
-                    f"Loading sequential model (length={sequence_length})..."
-                )
-                model = UavModelWithLSTM().to(self.device)
+            # T & R from region (fallback to default)
+            if self.detecting_region_info:
+                T = torch.tensor(self.detecting_region_info.transmittor_position,
+                                 dtype=torch.float32, device=self.device)
+                R = torch.stack([torch.tensor(self.detecting_region_info.receiver_position_1),
+                                 torch.tensor(self.detecting_region_info.receiver_position_2),
+                                 torch.tensor(self.detecting_region_info.receiver_position_3)],
+                                dim=0, dtype=torch.float32, device=self.device)
             else:
-                self.status_var.set("Loading non-sequential model...")
-                model = UavModel().to(self.device)
+                T = torch.tensor([0.,0.], device=self.device)
+                R = torch.tensor([[100.,0.],[50.,86.6],[-50.,86.6]],
+                                 device=self.device)
 
-            try:
-                checkpoint = torch.load(
-                    filepath, map_location=self.device, weights_only=True
-                )
-            except TypeError:
-                checkpoint = torch.load(filepath, map_location=self.device)
+            ModelCls = PinUavSeqModel if seq_len>1 else PinUavModel
+            self.model = ModelCls(T, R).to(self.device)
 
-            model.load_state_dict(checkpoint)
-            model.eval()
+            raw_ckpt = torch.load(fp, map_location=self.device)
+            ckpt = strip_prefix_from_state_dict(raw_ckpt)
+            missing, unexpected = self.model.load_state_dict(ckpt, strict=False)
 
-            self.model = model
-            self.model_path_var.set(f"Loaded: {os.path.basename(filepath)}")
-            self.predict_button.config(state=tk.NORMAL)
-            self.status_var.set(f"✅ Model loaded on {self.device}")
+            self.model.eval()
+            self.model_path_var.set(f"Loaded: {os.path.basename(fp)}")
+            self.predict_btn.config(state=tk.NORMAL)
+            self.status_var.set(f"✅ Model loaded ({len(missing)} missing, {len(unexpected)} extra)")
         except Exception as e:
             self.model = None
-            self.device = None
-            self.model_path_var.set("Failed to load model.")
-            self.predict_button.config(state=tk.DISABLED)
+            self.predict_btn.config(state=tk.DISABLED)
             self.status_var.set(f"❌ Model load error: {e}")
 
-    def on_trajectory_select(self, event=None):
-        """Callback to visualize the newly selected trajectory and clear old predictions."""
-        self.predictions = None
-        self.true_labels = None
-        self.visualize_selected_trajectory()
-
+    # ---------- Prediction ----------
     def run_prediction(self):
-        """Prepares data for the selected trajectory and runs the loaded model."""
         if not self.model:
-            self.status_var.set("⚠️ Please load a model first.")
-            return
-
-        selected_index = self.trajectory_selector.current()
-        if selected_index == -1:
-            self.status_var.set("⚠️ Please generate and select a trajectory.")
-            return
-
+            self.status_var.set("⚠️ Load model first."); return
+        idx = self.trajectory_selector.current()
+        if idx==-1:
+            self.status_var.set("⚠️ Select a trajectory."); return
         try:
-            # MODIFIED: Get sequence length from UI
-            sequence_length = int(self.sequence_length_var.get())
+            seq_len = int(self.sequence_length_var.get())
         except ValueError:
-            messagebox.showerror("Invalid Input", "Sequence Length must be an integer.")
-            return
+            messagebox.showerror("Invalid Input", "Sequence Length must be int"); return
 
-        selected_trajectory = self.trajectories[selected_index]
+        traj = self.trajectories[idx]
+        feats, labels = self._prepare_data_for_model(traj, self.detecting_region_info, seq_len)
+        if feats is None:
+            self.status_var.set("ℹ️ Trajectory too short."); return
 
-        # MODIFIED: Pass sequence_length to data preparation
-        features, labels = self._prepare_data_for_model(
-            selected_trajectory, self.detecting_region_info, sequence_length
-        )
+        feats_t = torch.tensor(feats, dtype=torch.float32, device=self.device)
+        if seq_len==1:  # (N,6)
+            pass
+        else:           # (N_seq, seq_len, 6)
+            pass
+        with torch.no_grad():
+            cart = self.model(feats_t)
+            if cart.dim()==3: x,y = cart[:,:,0], cart[:,:,1]
+            else:             x,y = cart[:,0],   cart[:,1]
+            r = torch.sqrt(x**2+y**2+1e-8); sinT = y/r; cosT = x/r
+            polar = torch.stack([r,sinT,cosT], dim=-1)
 
-        if features is None:
-            self.status_var.set("ℹ️ Trajectory too short for sequencing, no prediction.")
-            self.predictions = None
-            self.true_labels = None
-        else:
-            try:
-                # The input features tensor is now either (num_points, 6) or (num_sequences, seq_len, 6)
-                # We need to add a batch dimension for the model.
-                features_tensor = (
-                    torch.tensor(features, dtype=torch.float32)
-                    .unsqueeze(0)
-                    .to(self.device)
-                )
-
-                # If non-sequential, the shape is (1, num_points, 6), which is wrong for UavModel.
-                # If sequential, the shape is (1, num_sequences, seq_len, 6), also wrong.
-                # The model expects a batch dimension, so we'll process the whole trajectory as one batch.
-                if sequence_length == 1:
-                    # Shape (num_points, 6)
-                    features_tensor = torch.tensor(features, dtype=torch.float32).to(
-                        self.device
-                    )
-                else:
-                    # Shape (num_sequences, seq_len, 6)
-                    features_tensor = torch.tensor(features, dtype=torch.float32).to(
-                        self.device
-                    )
-
-                with torch.no_grad():
-                    outputs = self.model(features_tensor)
-
-                self.predictions = outputs.cpu().numpy()
-                self.true_labels = labels
-                self.status_var.set(
-                    f"✅ Prediction complete for {selected_trajectory.name}"
-                )
-            except Exception as e:
-                self.status_var.set(f"❌ Prediction error: {e}")
-                self.predictions = None
-                self.true_labels = None
-
+        self.predictions = polar.cpu().numpy(); self.true_labels = labels
+        self.status_var.set("✅ Prediction complete.")
         self.visualize_selected_trajectory()
 
-    def _prepare_data_for_model(
-        self, trajectory, detecting_region_info, sequence_length
-    ):
-        """
-        MODIFIED: Constructs features and labels, creating sequences if sequence_length > 1.
-        """
-        # Constants
-        TIME_INTERVAL = 0.01
-        FC = 6e9
-        C = 3e8
+    # ========================================================
+    #                 Data preparation
+    # ========================================================
+    def _prepare_data_for_model(self, trajectory, region, seq_len):
+        TIME_INTERVAL=0.01; FC=6e9; C=3e8
+        dop_info = doppler_info_module.DopplerInfo(c=C, fc=FC, time_interval=TIME_INTERVAL)
+        ca, cb = generate_lines_from_trajectory(trajectory, TIME_INTERVAL)
 
-        doppler_info = doppler_info_module.DopplerInfo(
-            c=C, fc=FC, time_interval=TIME_INTERVAL
-        )
-        coords_a, coords_b = generate_lines_from_trajectory(trajectory, TIME_INTERVAL)
+        if len(ca)<seq_len: return None, None
 
-        if len(coords_a) < sequence_length:
-            return None, None
+        phis = np.array([get_angle_phi(region, a, b) for a,b in zip(ca,cb)])
+        w, dop = generate_w_and_doppler(region, dop_info, ca, cb, phis)
+        feats  = get_features(phis, w, dop)
+        labels = get_labels(region, cb)
 
-        phis1234 = np.array(
-            [
-                get_angle_phi(detecting_region_info, ca, cb)
-                for ca, cb in zip(coords_a, coords_b)
-            ]
-        )
-        w, doppler = generate_w_and_doppler(
-            detecting_region_info, doppler_info, coords_a, coords_b, phis1234
-        )
+        if seq_len<=1:
+            return feats, labels
+        # sliding window
+        n_seq = len(feats)-seq_len+1
+        seq_feats = np.stack([feats[i:i+seq_len] for i in range(n_seq)], axis=0)
+        seq_labels= labels[seq_len-1:]
+        return seq_feats, seq_labels
 
-        # These are the "flat" features and labels for each time step
-        flat_features = get_features(phis1234, w, doppler)
-        flat_labels = get_labels(detecting_region_info, coords_b)
-
-        # If sequence length is 1, behavior is as before
-        if sequence_length <= 1:
-            return flat_features, flat_labels
-
-        # If sequence length > 1, create overlapping sequences
-        else:
-            num_sequences = len(flat_features) - sequence_length + 1
-            if num_sequences <= 0:
-                return None, None
-
-            # Create sequences of features
-            # Using a loop for clarity; for very large data, stride_tricks would be faster
-            sequential_features = []
-            for i in range(num_sequences):
-                sequential_features.append(flat_features[i : i + sequence_length])
-
-            # The label for each sequence is the label of its LAST element
-            sequential_labels = flat_labels[sequence_length - 1 :]
-
-            return np.array(sequential_features), sequential_labels
+    # ========================================================
+    #                 可视化
+    # ========================================================
+    def on_traj_select(self, _=None):
+        self.predictions = self.true_labels = None
+        self.visualize_selected_trajectory()
 
     def visualize_selected_trajectory(self):
-        """Clears the canvas and draws boundaries, trajectories, and predictions."""
         self.ax.clear()
+        def to_local(pts):
+            return self.detecting_region_info.transform_points_to_tx_rx1(pts) \
+                if self.plot_in_local_frame and self.detecting_region_info else pts
 
-        def to_plot_coords(points):
-            points = np.asarray(points, dtype=float)
-            if self.plot_in_local_frame and self.detecting_region_info is not None:
-                return self.detecting_region_info.transform_points_to_tx_rx1(points)
-            return points
-
-        # 1. Draw boundaries
+        # draw boundaries
         if self.outer_vertices:
-            self.ax.add_patch(
-                Polygon(
-                    to_plot_coords(self.outer_vertices),
-                    fill=False,
-                    edgecolor="k",
-                    lw=2,
-                    label="Outer Boundary",
-                )
-            )
+            self.ax.add_patch(Polygon(to_local(self.outer_vertices), fill=False,
+                                      edgecolor="k", lw=2, label="Outer"))
         if self.inner_vertices:
-            self.ax.add_patch(
-                Polygon(
-                    to_plot_coords(self.inner_vertices),
-                    fill=False,
-                    edgecolor="g",
-                    ls="--",
-                    lw=2,
-                    label="Generation Area",
-                )
-            )
+            self.ax.add_patch(Polygon(to_local(self.inner_vertices), fill=False,
+                                      edgecolor="g", ls="--", lw=1.5, label="GenArea"))
 
-        # 2. Get selected trajectory
-        selected_index = self.trajectory_selector.current()
-        if selected_index == -1 or not self.trajectories:
-            self.ax.legend()
-            self.canvas.draw()
-            return
+        idx = self.trajectory_selector.current()
+        if idx!=-1 and self.trajectories:
+            traj = self.trajectories[idx]
+            if self.predictions is None:
+                if traj.trajectory:
+                    pts = to_local(np.array(traj.trajectory))
+                    self.ax.plot(pts[:,0], pts[:,1], "b-", lw=2, label=traj.name)
+                if traj.key_points:
+                    kp = to_local(np.array(traj.key_points))
+                    self.ax.scatter(kp[:,0], kp[:,1], s=70, c="purple",
+                                    edgecolors="k", zorder=5, label="KeyPts")
+            else:
+                def polar2cart(arr):
+                    rho, s, c = arr[:,0], arr[:,1], arr[:,2]
+                    return np.stack([rho*c, rho*s], axis=1)
+                true = polar2cart(self.true_labels)
+                pred = polar2cart(self.predictions)
+                pred = smooth_coords(pred, "adaptive", 50, 100, 3)
 
-        trajectory = self.trajectories[selected_index]
+                self.ax.plot(true[:,0], true[:,1], "bo-", ms=4, label="True")
+                self.ax.plot(pred[:,0], pred[:,1], "r--x", ms=4, label="Pred")
+                for t,p in zip(true,pred):
+                    self.ax.plot([t[0],p[0]],[t[1],p[1]], color="gray", lw=0.6)
 
-        # 3. Plotting Logic
-        if self.predictions is not None and self.true_labels is not None:
-            # Plot with predictions
-            if trajectory.trajectory:
-                path_points = np.array(trajectory.trajectory)
-                self.ax.plot(
-                    to_plot_coords(path_points)[:, 0],
-                    to_plot_coords(path_points)[:, 1],
-                    "-",
-                    color="lightgray",
-                    lw=1.5,
-                    label="Full True Path",
-                    zorder=1,
-                )
-
-            def polar_to_cartesian(data):
-                rho, sin_theta, cos_theta = data[:, 0], data[:, 1], data[:, 2]
-                x_local = rho * cos_theta
-                y_local = rho * sin_theta
-                points_local = np.stack([x_local, y_local], axis=1)
-                if self.plot_in_local_frame:
-                    # 直接在局部坐标下绘制
-                    return points_local
-                else:
-                    # 转回全局坐标后绘制
-                    u, v = self.detecting_region_info.get_tx_rx1_basis()
-                    R = np.stack([u, v], axis=1)
-                    T = self.detecting_region_info.transmittor_position
-                    return T + points_local @ R
-
-            true_coords = polar_to_cartesian(self.true_labels)
-            pred_coords = polar_to_cartesian(self.predictions)
-            pred_coords = smooth_coords(
-                pred_coords,
-                method="adaptive",
-                min_window=50,
-                max_window=100,
-                polyorder=3,
-            )
-            # 想固定窗口：pred_coords = smooth_coords(pred_coords, method="fixed", window_length=11, polyorder=3)
-
-            self.ax.plot(
-                to_plot_coords(true_coords)[:, 0],
-                to_plot_coords(true_coords)[:, 1],
-                "b-o",
-                markersize=4,
-                label="True Segment Endpoints",  # MODIFIED Label
-                zorder=3,
-            )
-            self.ax.plot(
-                to_plot_coords(pred_coords)[:, 0],
-                to_plot_coords(pred_coords)[:, 1],
-                "r--x",
-                markersize=4,
-                label="Predicted Path",
-                zorder=3,
-            )
-
-            for t_coord, p_coord in zip(true_coords, pred_coords):
-                self.ax.plot(
-                    [
-                        to_plot_coords([t_coord, p_coord])[0, 0],
-                        to_plot_coords([t_coord, p_coord])[1, 0],
-                    ],
-                    [
-                        to_plot_coords([t_coord, p_coord])[0, 1],
-                        to_plot_coords([t_coord, p_coord])[1, 1],
-                    ],
-                    color="gray",
-                    alpha=0.5,
-                    lw=0.8,
-                    zorder=2,
-                )
-        else:
-            # Plot without predictions
-            if trajectory.trajectory:
-                path_points = np.array(trajectory.trajectory)
-                self.ax.plot(
-                    to_plot_coords(path_points)[:, 0],
-                    to_plot_coords(path_points)[:, 1],
-                    "b-",
-                    lw=2,
-                    label=trajectory.name,
-                )
-            if trajectory.key_points:
-                key_points = np.array(trajectory.key_points)
-                self.ax.scatter(
-                    to_plot_coords(key_points)[:, 0],
-                    to_plot_coords(key_points)[:, 1],
-                    color="purple",
-                    s=80,
-                    marker="o",
-                    edgecolors="black",
-                    zorder=5,
-                    label="Key Points",
-                )
-
-        # 4. Final plot adjustments
+        # limits
         if self.outer_vertices:
-            ov = to_plot_coords(self.outer_vertices)
-            all_x = [v[0] for v in ov]
-            all_y = [v[1] for v in ov]
-            padding = max((max(all_x) - min(all_x)), (max(all_y) - min(all_y))) * 0.15
-            self.ax.set_xlim(min(all_x) - padding, max(all_x) + padding)
-            self.ax.set_ylim(min(all_y) - padding, max(all_y) + padding)
+            ov = to_local(self.outer_vertices)
+            xs,ys = zip(*ov); pad=0.15*max(max(xs)-min(xs), max(ys)-min(ys))
+            self.ax.set_xlim(min(xs)-pad, max(xs)+pad)
+            self.ax.set_ylim(min(ys)-pad, max(ys)+pad)
 
-        self.ax.set_title(
-            f"Trajectory Visualization (Region Seed: {self.seed_var.get()})"
-        )
-        self.ax.set_xlabel("X (TX→RX1)")
-        self.ax.set_ylabel("Y (CCW 90°)")
-        self.ax.grid(True)
-        self.ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
-        self.ax.set_aspect("equal", adjustable="box")
-        self.fig.tight_layout(rect=[0, 0, 0.82, 1])
+        self.ax.set_aspect("equal"); self.ax.grid(True)
+        self.ax.set_xlabel("X (TX→RX1)"); self.ax.set_ylabel("Y (CCW 90°)")
+        self.ax.set_title(f"Trajectory Visualization (Seed {self.seed_var.get()})")
+        self.ax.legend(loc="upper left", bbox_to_anchor=(1.02,1))
+        self.fig.tight_layout(rect=[0,0,0.82,1])
         self.canvas.draw()
 
-
+# ============================================================
+#                        main
+# ============================================================
 if __name__ == "__main__":
-    try:
-        import scipy
-    except ImportError as e:
-        messagebox.showerror(
-            "Dependency Error",
-            f"Required library missing: 'scipy'.\n\nDetails: {e}",
-        )
-        sys.exit(1)
-
-    app = App()
-    app.mainloop()
+    app = App(); app.mainloop()

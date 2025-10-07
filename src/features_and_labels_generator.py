@@ -84,13 +84,13 @@ def calculate_distances(train_label, detecting_region_info):
     return distances
 
 
-def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_a):
-    # 使用以 T 为原点、T→RX1 为 X 轴的局部坐标系
-    p_local = detecting_region_info.transform_point_to_tx_rx1(coord_a)
-    phi = np.arctan2(p_local[1], p_local[0])
+def _get_d_sin_cos_phi(detecting_region_info: DetectingRegionInfo, coord_local):
+    # 直接使用局部坐标：coord_local 已在以 T→R1 为 X 轴的局部系
+    x, y = coord_local[0], coord_local[1]
+    phi = np.arctan2(y, x)
     if phi < 0:
         phi += 2 * np.pi
-    d = np.hypot(p_local[0], p_local[1])
+    d = np.hypot(x, y)
     return [d, np.sin(phi), np.cos(phi)]
 
 
