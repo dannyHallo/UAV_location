@@ -2,7 +2,7 @@
 # torch
 
 matplotlib
-numpy
+numpy<2
 scikit_learn
 setuptools
 ipykernel

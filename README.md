@@ -74,14 +74,21 @@
 
 ```bash
 # 创建虚拟环境
-conda create -n "UAV_location" python=3.9 -y
+conda create -n "UAV_location" python=3.9.19 -y
 conda activate UAV_location
-
-# 安装PyTorch (根据您的CUDA版本选择)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # 安装其他依赖
 pip install -r requirements.txt
+
+# # 安装PyTorch (根据您的CUDA版本选择)
+# pip install torch torchvision torchaudio
+
+# Linux查看cuda版本
+nvcc --version
+
+# CUDA 11.3
+pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+
 ```
 
 ## 快速开始
