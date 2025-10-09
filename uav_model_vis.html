@@ -1,256 +1,496 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Physics-Informed UAV Locator（Robust GN 改进版）流程图</title>
   <style>
-    :root{
-      --bg:#0b1220; --fg:#e5e7eb; --muted:#9ca3af;
-      --panel:#0f172a; --card:#0b1220; --grid:rgba(255,255,255,0.05);
-      --edge:#7dd3fc; --edge2:#fbbf24;
-      --k:#60a5fa; --g:#34d399; --p:#a78bfa; --y:#fbbf24; --o:#f97316; --r:#f87171;
-      --shadow:0 10px 25px rgba(0,0,0,0.35)
+    :root {
+      --bg: #ffffff;
+      --fg: #1f2937;
+      --muted: #6b7280;
+      --panel: #f9fafb;
+      --card: #ffffff;
+      --grid: rgba(0, 0, 0, 0.05);
+      --edge: #3b82f6;
+      --edge2: #f59e0b;
+      --k: #2563eb;
+      --g: #059669;
+      --p: #7c3aed;
+      --y: #d97706;
+      --o: #ea580c;
+      --r: #dc2626;
+      --shadow: 0 10px 25px rgba(0, 0, 0, 0.1)
     }
-    *{box-sizing:border-box}
-    body{margin:0;background:
-      radial-gradient(900px 400px at 50% -200px, #1f2937 0%, var(--bg) 60%, #0b1020 100%),
-      linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
-      color:var(--fg); font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
-      min-height:100vh}
-    header{position:sticky;top:0;z-index:5;padding:14px 14px 10px;border-bottom:1px solid rgba(255,255,255,0.06);
-      background:linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.55), rgba(15,23,42,0)); backdrop-filter: blur(8px)}
-    .title{display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:800}
-    .dot{width:10px;height:10px;border-radius:50%;background:radial-gradient(circle at 30% 30%, #93c5fd, #2563eb);
-      box-shadow:0 0 16px rgba(37,99,235,0.8)}
-    .subtitle{margin:6px 0 0;color:var(--muted);font-size:12px}
-    .wrap{max-width:1200px;margin:0 auto;padding:14px;display:grid;grid-template-columns:1fr;gap:14px}
-    @media(min-width:900px){.wrap{grid-template-columns:300px 1fr}}
-    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
-      border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:14px; box-shadow:var(--shadow)}
-    .legend h3{margin:0 0 10px;font-size:14px;color:#f3f4f6}
-    .legend ul{list-style:none;padding:0;margin:0;display:grid;gap:8px}
-    .legend li{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px}
-    .chip{width:12px;height:12px;border-radius:3px}
-    .init{background:var(--k)} .phys{background:var(--g)} .ml{background:var(--p)}
-    .seq{background:var(--y)} .io{background:var(--r)} .misc{background:var(--o)}
-    .canvas{position:relative;overflow:hidden;border-radius:14px;border:1px solid rgba(255,255,255,0.08)}
-    svg{width:100%;height:auto;display:block}
-    .grid line{stroke:var(--grid);stroke-width:1}
-    .node rect{fill:url(#nodeGrad);stroke:rgba(255,255,255,0.12);stroke-width:1;rx:10;ry:10;
-      filter:drop-shadow(0 6px 16px rgba(0,0,0,0.35))}
-    .node text.h{font-size:12px;font-weight:800;fill:#f3f4f6}
-    .node text.d{font-size:11px;fill:#cbd5e1}
-    .badge{font-size:10px;fill:#93c5fd}
-    .edge path{fill:none;stroke:var(--edge);stroke-width:2;opacity:.95;
-      filter:drop-shadow(0 2px 6px rgba(125,211,252,0.35))}
-    .edge2 path{stroke:var(--edge2)}
-    .arrow{fill:var(--edge)}
-    .arrow2{fill:var(--edge2)}
-    .section{font-size:11px;fill:#9ca3af;letter-spacing:.08em;text-transform:uppercase}
-    .pill{font-size:10px;fill:#0b1220}
-    .pill-bg{rx:8;ry:8;fill:#93c5fd;opacity:.85}
-    .note{font-size:10px;fill:#cbd5e1}
-    .kbd{font-size:10px;fill:#eab308}
-    .footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
-    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-    .btn, .sel{background:#0b1220;color:var(--fg);border:1px solid rgba(255,255,255,0.08);
-      padding:8px 10px;border-radius:10px;font-size:12px;cursor:pointer}
-    .btn:hover{border-color:#60a5fa;box-shadow:0 0 0 2px rgba(96,165,250,0.2) inset}
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      min-height: 100vh
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(8px)
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #60a5fa, #2563eb);
+      box-shadow: 0 0 16px rgba(37, 99, 235, 0.4)
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 16px
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px
+    }
+
+    @media(min-width:900px) {
+      .wrap {
+        grid-template-columns: 300px 1fr
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow)
+    }
+
+    .legend h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: var(--fg)
+    }
+
+    .legend ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 8px
+    }
+
+    .legend li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 16px
+    }
+
+    .chip {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px
+    }
+
+    .init {
+      background: var(--k)
+    }
+
+    .phys {
+      background: var(--g)
+    }
+
+    .ml {
+      background: var(--p)
+    }
+
+    .seq {
+      background: var(--y)
+    }
+
+    .io {
+      background: var(--r)
+    }
+
+    .misc {
+      background: var(--o)
+    }
+
+    .canvas {
+      position: relative;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.1)
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block
+    }
+
+    .grid line {
+      stroke: transparent;
+      stroke-width: 1
+    }
+
+    .node rect {
+      fill: url(#nodeGrad);
+      stroke: rgba(0, 0, 0, 0.1);
+      stroke-width: 1;
+      rx: 10;
+      ry: 10;
+      filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.1))
+    }
+
+    .node text.h {
+      font-size: 16px;
+      font-weight: 800;
+      fill: var(--fg)
+    }
+
+    .node text.d {
+      font-size: 14px;
+      fill: var(--muted)
+    }
+
+    .badge {
+      font-size: 12px;
+      fill: var(--k)
+    }
+
+    .edge path {
+      fill: none;
+      stroke: var(--edge);
+      stroke-width: 2;
+      opacity: .95;
+      filter: drop-shadow(0 2px 6px rgba(59, 130, 246, 0.2))
+    }
+
+    .edge2 path {
+      stroke: var(--edge2)
+    }
+
+    .arrow {
+      fill: var(--edge)
+    }
+
+    .arrow2 {
+      fill: var(--edge2)
+    }
+
+    .section {
+      font-size: 14px;
+      fill: var(--muted);
+      letter-spacing: .08em;
+      text-transform: uppercase
+    }
+
+    .pill {
+      font-size: 12px;
+      fill: var(--fg)
+    }
+
+    .pill-bg {
+      rx: 8;
+      ry: 8;
+      fill: var(--k);
+      opacity: .85
+    }
+
+    .note {
+      font-size: 12px;
+      fill: var(--muted)
+    }
+
+    .kbd {
+      font-size: 12px;
+      fill: var(--y)
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 16px;
+      text-align: center;
+      padding: 12px
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px
+    }
+
+    .btn,
+    .sel {
+      background: var(--panel);
+      color: var(--fg);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 14px;
+      cursor: pointer
+    }
+
+    .btn:hover {
+      border-color: var(--k);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) inset
+    }
   </style>
 </head>
+
 <body>
-<header>
-  <h1 class="title"><span class="dot"></span>Physics-Informed UAV Locator（Robust GN 改进版）流程图</h1>
-  <p class="subtitle">Huber-IRLS + Tikhonov + 单步 Gauss–Newton → Δp_lin；Residual MLP → Δp_corr；可选 LSTM → 时序滤波</p>
-</header>
+  <header>
+    <h1 class="title"><span class="dot"></span>Physics-Informed UAV Locator（Robust GN 改进版）流程图</h1>
+    <p class="subtitle">Huber-IRLS + Tikhonov + 单步 Gauss–Newton → Δp_lin；Residual MLP → Δp_corr；可选 LSTM → 时序滤波</p>
+  </header>
 
-<main class="wrap">
-  <aside class="panel legend">
-    <h3>图例</h3>
-    <ul>
-      <li><span class="chip init"></span> 常量/输入/几何</li>
-      <li><span class="chip phys"></span> 物理层（鲁棒 GN）</li>
-      <li><span class="chip ml"></span> 学习层（MLP/SE）</li>
-      <li><span class="chip seq"></span> 时序（LSTM）</li>
-      <li><span class="chip misc"></span> 组成/输出</li>
-      <li><span class="chip io"></span> 关键接口/形状</li>
-    </ul>
+  <main class="wrap">
+    <aside class="panel legend">
+      <h3>图例</h3>
+      <ul>
+        <li><span class="chip init"></span> 常量/输入/几何</li>
+        <li><span class="chip phys"></span> 物理层（鲁棒 GN）</li>
+        <li><span class="chip ml"></span> 学习层（MLP/SE）</li>
+        <li><span class="chip seq"></span> 时序（LSTM）</li>
+        <li><span class="chip misc"></span> 组成/输出</li>
+        <li><span class="chip io"></span> 关键接口/形状</li>
+      </ul>
 
-    <div class="controls">
-      <button class="btn" id="fitAll">全览</button>
-      <button class="btn" id="zoomPhys">物理层</button>
-      <button class="btn" id="zoomMLP">误差MLP</button>
-      <button class="btn" id="zoomSeq">时序模型</button>
-      <select class="sel" id="toggleLang">
-        <option value="zh">中文标注</option>
-        <option value="en">English labels</option>
-      </select>
+      <div class="controls">
+        <button class="btn" id="fitAll">全览</button>
+        <button class="btn" id="zoomPhys">物理层</button>
+        <button class="btn" id="zoomMLP">误差MLP</button>
+        <button class="btn" id="zoomSeq">时序模型</button>
+        <select class="sel" id="toggleLang">
+          <option value="zh">中文标注</option>
+          <option value="en">English labels</option>
+        </select>
+      </div>
+    </aside>
+
+    <section class="panel canvas">
+      <svg id="flow" viewBox="0 0 1200 920" preserveAspectRatio="xMidYMin slice" role="img" aria-label="流程图">
+        <defs>
+          <linearGradient id="nodeGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="rgba(0,0,0,0.02)" />
+            <stop offset="100%" stop-color="rgba(0,0,0,0.01)" />
+          </linearGradient>
+          <marker id="m1" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="arrow"></path>
+          </marker>
+          <marker id="m2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="arrow2"></path>
+          </marker>
+          <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+            <rect width="60" height="60" fill="white"></rect>
+          </pattern>
+        </defs>
+
+        <!-- backdrop -->
+        <rect x="0" y="0" width="1200" height="920" fill="white"></rect>
+
+        <!-- Section labels -->
+        <text x="30" y="40" class="section" data-zh="常量与输入" data-en="Constants & Inputs">常量与输入</text>
+        <text x="30" y="190" class="section" data-zh="物理层：鲁棒 GN" data-en="Physical Layer: Robust GN">物理层：鲁棒 GN</text>
+        <text x="30" y="430" class="section" data-zh="学习层：Residual MLP"
+          data-en="Learning Layer: Residual MLP">学习层：Residual MLP</text>
+        <text x="30" y="640" class="section" data-zh="单帧与时序输出" data-en="Single-frame & Sequential Output">单帧与时序输出</text>
+
+        <!-- Nodes -->
+        <!-- Inputs/Constants -->
+        <g class="node" id="n_const">
+          <rect x="60" y="60" width="380" height="100"></rect>
+          <text class="h" x="80" y="90" data-zh="常量" data-en="Constants">常量</text>
+          <text class="d" x="80" y="115" data-zh="DIM, LAMBDA, C0, FC" data-en="DIM, LAMBDA, C0, FC">DIM, LAMBDA, C0,
+            FC</text>
+        </g>
+
+        <g class="node" id="n_input">
+          <rect x="480" y="60" width="640" height="100"></rect>
+          <text class="h" x="500" y="90" data-zh="输入/几何" data-en="Inputs / Geometry">输入/几何</text>
+          <text class="d" x="500" y="115" data-zh="feats=(B,6): [φ1..3, fd1..3],  p_prev=(B,Dim),  T=(Dim), R=(3,Dim)"
+            data-en="feats=(B,6): [φ1..3, fd1..3],  p_prev=(B,Dim),  T=(Dim), R=(3,Dim)">feats=(B,6): [φ1..3, fd1..3],
+            p_prev=(B,Dim), T=(Dim), R=(3,Dim)</text>
+        </g>
+
+        <!-- Physical Layer: LeastSquaresLayer -->
+        <g class="node" id="n_phys_header">
+          <rect x="60" y="210" width="1060" height="190"></rect>
+          <text class="h" x="80" y="240" data-zh="LeastSquaresLayer（Huber-IRLS + Tikhonov + 单步 GN）"
+            data-en="LeastSquaresLayer (Huber-IRLS + Tikhonov + 1-step GN)">LeastSquaresLayer（Huber-IRLS + Tikhonov + 单步
+            GN）</text>
+          <text class="d" x="80" y="265" data-zh="1) 计算单位向量: u_AT, u_AR；构造 J=u_AT⊕u_AR"
+            data-en="1) Unit vectors: u_AT, u_AR; build J=u_AT⊕u_AR">1) 计算单位向量: u_AT, u_AR；构造 J=u_AT⊕u_AR</text>
+          <text class="d" x="80" y="285" data-zh="2) d = (λ/4π)·φ；基于 Huber 权 w，对 J,y 加权"
+            data-en="2) d = (λ/4π)·φ; apply Huber weights w to J,y">2) d = (λ/4π)·φ；基于 Huber 权 w，对 J,y 加权</text>
+          <text class="d" x="80" y="305" data-zh="3) 解 (JᵀWJ + αI)Δ = JᵀWy（Cholesky）"
+            data-en="3) Solve (JᵀWJ + αI)Δ = JᵀWy (Cholesky)">3) 解 (JᵀWJ + αI)Δ = JᵀWy（Cholesky）</text>
+          <text class="d" x="80" y="325" data-zh="输出: Δp_lin=(B,Dim)" data-en="Output: Δp_lin=(B,Dim)">输出:
+            Δp_lin=(B,Dim)</text>
+          <text class="badge" x="80" y="345">Huber-IRLS · Tikhonov · Cholesky</text>
+        </g>
+
+        <!-- Residual MLP -->
+        <g class="node" id="n_mlp">
+          <rect x="60" y="450" width="1060" height="150"></rect>
+          <text class="h" x="80" y="480" data-zh="ResidualMLP（SE-ResBlock×L）"
+            data-en="ResidualMLP (SE-ResBlock×L)">ResidualMLP（SE-ResBlock×L）</text>
+          <text class="d" x="80" y="505" data-zh="输入: concat[feats(6), Δp_lin(Dim)] → embed → SE-ResBlocks → head"
+            data-en="Input: concat[feats(6), Δp_lin(Dim)] → embed → SE-ResBlocks → head">输入: concat[feats(6),
+            Δp_lin(Dim)] → embed → SE-ResBlocks → head</text>
+          <text class="d" x="80" y="525" data-zh="输出: Δp_corr=(B,Dim) —— 误差补偿"
+            data-en="Output: Δp_corr=(B,Dim) · correction">输出: Δp_corr=(B,Dim) —— 误差补偿</text>
+        </g>
+
+        <!-- Single-frame model -->
+        <g class="node" id="n_single">
+          <rect x="60" y="630" width="520" height="180"></rect>
+          <text class="h" x="80" y="660" data-zh="PinUavModel（单帧）"
+            data-en="PinUavModel (single-frame)">PinUavModel（单帧）</text>
+          <text class="d" x="80" y="685" data-zh="1) Δp_lin = LeastSquaresLayer(p_prev, feats)"
+            data-en="1) Δp_lin = LeastSquaresLayer(p_prev, feats)">1) Δp_lin = LeastSquaresLayer(p_prev, feats)</text>
+          <text class="d" x="80" y="705" data-zh="2) Δp_corr = ResidualMLP([feats, Δp_lin])"
+            data-en="2) Δp_corr = ResidualMLP([feats, Δp_lin])">2) Δp_corr = ResidualMLP([feats, Δp_lin])</text>
+          <text class="d" x="80" y="725" data-zh="3) p_hat = p_prev + Δp_lin + Δp_corr"
+            data-en="3) p_hat = p_prev + Δp_lin + Δp_corr">3) p_hat = p_prev + Δp_lin + Δp_corr</text>
+          <text class="d" x="80" y="745" data-zh="输出: p_hat=(B,Dim)" data-en="Output: p_hat=(B,Dim)">输出:
+            p_hat=(B,Dim)</text>
+        </g>
+
+        <!-- Sequential model -->
+        <g class="node" id="n_seq">
+          <rect x="600" y="630" width="520" height="220"></rect>
+          <text class="h" x="620" y="660" data-zh="PinUavSeqModel（时序）"
+            data-en="PinUavSeqModel (sequential)">PinUavSeqModel（时序）</text>
+          <text class="d" x="620" y="685" data-zh="循环 t∈[1..S]：" data-en="Loop t=1..S:">循环 t∈[1..S]：</text>
+          <text class="d" x="640" y="705" data-zh="a) Δp_ls_t = LeastSquaresLayer(p_prev, feats[:,t])"
+            data-en="a) Δp_ls_t = LeastSquaresLayer(p_prev, feats[:,t])">a) Δp_ls_t = LeastSquaresLayer(p_prev,
+            feats[:,t])</text>
+          <text class="d" x="640" y="725" data-zh="b) 拼接 [feats_t, Δp_ls_t] → LSTM 输入"
+            data-en="b) Concat [feats_t, Δp_ls_t] → LSTM input">b) 拼接 [feats_t, Δp_ls_t] → LSTM 输入</text>
+          <text class="d" x="640" y="745" data-zh="c) p_prev ← p_prev + Δp_ls_t（物理先验累计）"
+            data-en="c) p_prev ← p_prev + Δp_ls_t (phys prior)">c) p_prev ← p_prev + Δp_ls_t（物理先验累计）</text>
+          <text class="d" x="620" y="770" data-zh="LSTM 输出 → head → Δp_corr_seq；最终："
+            data-en="LSTM → head → Δp_corr_seq; final:">LSTM 输出 → head → Δp_corr_seq；最终：</text>
+          <text class="d" x="640" y="790" data-zh="p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq"
+            data-en="p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq">p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq</text>
+          <text class="d" x="620" y="810" data-zh="输出: p_hat=(B,S,Dim)" data-en="Output: p_hat=(B,S,Dim)">输出:
+            p_hat=(B,S,Dim)</text>
+        </g>
+
+        <!-- Edges -->
+        <g class="edge">
+          <path d="M440 110 C 470 110, 470 110, 480 110" marker-end="url(#m1)"></path>
+        </g>
+
+        <!-- input -> phys -->
+        <g class="edge">
+          <path d="M600 160 C 600 190, 600 190, 600 210" marker-end="url(#m1)"></path>
+        </g>
+        <!-- phys -> mlp -->
+        <g class="edge">
+          <path d="M590 400 C 590 430, 590 430, 590 450" marker-end="url(#m1)"></path>
+        </g>
+        <!-- mlp -> single -->
+        <g class="edge">
+          <path d="M430 600 C 430 620, 430 620, 430 630" marker-end="url(#m1)"></path>
+        </g>
+        <!-- mlp -> seq -->
+        <g class="edge">
+          <path d="M750 600 C 750 620, 750 620, 750 630" marker-end="url(#m1)"></path>
+        </g>
+
+        <!-- IO badges -->
+        <g id="badges">
+          <!-- feats badge near input -->
+          <rect class="pill-bg" x="970" y="130" width="135" height="20"></rect>
+          <text class="pill" x="978" y="144">feats: (B,6), p_prev: (B,Dim)</text>
+
+          <!-- phys output -->
+          <rect class="pill-bg" x="860" y="340" width="130" height="20"></rect>
+          <text class="pill" x="868" y="354">Δp_lin: (B,Dim)</text>
+
+          <!-- mlp output -->
+          <rect class="pill-bg" x="860" y="515" width="130" height="20"></rect>
+          <text class="pill" x="868" y="529">Δp_corr: (B,Dim)</text>
+
+          <!-- single out -->
+          <rect class="pill-bg" x="290" y="790" width="120" height="20"></rect>
+          <text class="pill" x="298" y="804">p_hat: (B,Dim)</text>
+
+          <!-- seq out -->
+          <rect class="pill-bg" x="930" y="820" width="140" height="20"></rect>
+          <text class="pill" x="938" y="834">p_hat: (B,S,Dim)</text>
+        </g>
+
+        <!-- Notes -->
+        <text class="note" x="80" y="370" data-zh="Huber 权重缓解离群点；Tikhonov 正则稳定病态；Cholesky 高效解"
+          data-en="Huber for outliers; Tikhonov for stability; Cholesky solve">Huber 权重缓解离群点；Tikhonov 正则稳定病态；Cholesky
+          高效解</text>
+        <text class="note" x="80" y="555" data-zh="SE 注意力在通道上重标定嵌入，残差连接保梯度流"
+          data-en="SE recalibrates channels; residual keeps gradient flow">SE 注意力在通道上重标定嵌入，残差连接保梯度流</text>
+        <text class="kbd" x="80" y="865" data-zh="实用提示：将 Δp_lin 拼入输入，显式暴露物理先验给学习器"
+          data-en="Tip: concatenate Δp_lin to expose physics prior to learner">实用提示：将 Δp_lin 拼入输入，显式暴露物理先验给学习器</text>
+      </svg>
+    </section>
+
+    <div class="footer">
+      提示：左侧按钮可快速聚焦不同区域；下拉可切换中/英标注。
     </div>
-  </aside>
+  </main>
 
-  <section class="panel canvas">
-    <svg id="flow" viewBox="0 0 1200 920" preserveAspectRatio="xMidYMin slice" role="img" aria-label="流程图">
-      <defs>
-        <linearGradient id="nodeGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="rgba(255,255,255,0.06)"/>
-          <stop offset="100%" stop-color="rgba(255,255,255,0.015)"/>
-        </linearGradient>
-        <marker id="m1" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" class="arrow"></path>
-        </marker>
-        <marker id="m2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" class="arrow2"></path>
-        </marker>
-        <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
-          <rect width="60" height="60" fill="transparent"></rect>
-          <path d="M60 0 L0 0 0 60" class="grid"></path>
-        </pattern>
-      </defs>
+  <script>
+    // Simple viewBox zoom presets
+    const svg = document.getElementById('flow');
+    const fitAll = () => svg.setAttribute('viewBox', '0 0 1200 920');
+    const zoomPhys = () => svg.setAttribute('viewBox', '40 190 1120 240');
+    const zoomMLP = () => svg.setAttribute('viewBox', '40 440 1120 180');
+    const zoomSeq = () => svg.setAttribute('viewBox', '40 620 1120 250');
+    document.getElementById('fitAll').onclick = fitAll;
+    document.getElementById('zoomPhys').onclick = zoomPhys;
+    document.getElementById('zoomMLP').onclick = zoomMLP;
+    document.getElementById('zoomSeq').onclick = zoomSeq;
 
-      <!-- backdrop grid -->
-      <rect x="0" y="0" width="1200" height="920" fill="url(#grid)"></rect>
-
-      <!-- Section labels -->
-      <text x="30" y="40" class="section" data-zh="常量与输入" data-en="Constants & Inputs">常量与输入</text>
-      <text x="30" y="190" class="section" data-zh="物理层：鲁棒 GN" data-en="Physical Layer: Robust GN">物理层：鲁棒 GN</text>
-      <text x="30" y="430" class="section" data-zh="学习层：Residual MLP" data-en="Learning Layer: Residual MLP">学习层：Residual MLP</text>
-      <text x="30" y="640" class="section" data-zh="单帧与时序输出" data-en="Single-frame & Sequential Output">单帧与时序输出</text>
-
-      <!-- Nodes -->
-      <!-- Inputs/Constants -->
-      <g class="node" id="n_const">
-        <rect x="60" y="60" width="380" height="100"></rect>
-        <text class="h" x="80" y="90" data-zh="常量" data-en="Constants">常量</text>
-        <text class="d" x="80" y="115" data-zh="DIM, LAMBDA, C0, FC" data-en="DIM, LAMBDA, C0, FC">DIM, LAMBDA, C0, FC</text>
-      </g>
-
-      <g class="node" id="n_input">
-        <rect x="480" y="60" width="640" height="100"></rect>
-        <text class="h" x="500" y="90" data-zh="输入/几何" data-en="Inputs / Geometry">输入/几何</text>
-        <text class="d" x="500" y="115" data-zh="feats=(B,6): [φ1..3, fd1..3],  p_prev=(B,Dim),  T=(Dim), R=(3,Dim)" data-en="feats=(B,6): [φ1..3, fd1..3],  p_prev=(B,Dim),  T=(Dim), R=(3,Dim)">feats=(B,6): [φ1..3, fd1..3],  p_prev=(B,Dim),  T=(Dim), R=(3,Dim)</text>
-      </g>
-
-      <!-- Physical Layer: LeastSquaresLayer -->
-      <g class="node" id="n_phys_header">
-        <rect x="60" y="210" width="1060" height="190"></rect>
-        <text class="h" x="80" y="240" data-zh="LeastSquaresLayer（Huber-IRLS + Tikhonov + 单步 GN）" data-en="LeastSquaresLayer (Huber-IRLS + Tikhonov + 1-step GN)">LeastSquaresLayer（Huber-IRLS + Tikhonov + 单步 GN）</text>
-        <text class="d" x="80" y="265" data-zh="1) 计算单位向量: u_AT, u_AR；构造 J=u_AT⊕u_AR" data-en="1) Unit vectors: u_AT, u_AR; build J=u_AT⊕u_AR">1) 计算单位向量: u_AT, u_AR；构造 J=u_AT⊕u_AR</text>
-        <text class="d" x="80" y="285" data-zh="2) d = (λ/4π)·φ；基于 Huber 权 w，对 J,y 加权" data-en="2) d = (λ/4π)·φ; apply Huber weights w to J,y">2) d = (λ/4π)·φ；基于 Huber 权 w，对 J,y 加权</text>
-        <text class="d" x="80" y="305" data-zh="3) 解 (JᵀWJ + αI)Δ = JᵀWy（Cholesky）" data-en="3) Solve (JᵀWJ + αI)Δ = JᵀWy (Cholesky)">3) 解 (JᵀWJ + αI)Δ = JᵀWy（Cholesky）</text>
-        <text class="d" x="80" y="325" data-zh="输出: Δp_lin=(B,Dim)" data-en="Output: Δp_lin=(B,Dim)">输出: Δp_lin=(B,Dim)</text>
-        <text class="badge" x="80" y="345">Huber-IRLS · Tikhonov · Cholesky</text>
-      </g>
-
-      <!-- Residual MLP -->
-      <g class="node" id="n_mlp">
-        <rect x="60" y="450" width="1060" height="150"></rect>
-        <text class="h" x="80" y="480" data-zh="ResidualMLP（SE-ResBlock×L）" data-en="ResidualMLP (SE-ResBlock×L)">ResidualMLP（SE-ResBlock×L）</text>
-        <text class="d" x="80" y="505" data-zh="输入: concat[feats(6), Δp_lin(Dim)] → embed → SE-ResBlocks → head" data-en="Input: concat[feats(6), Δp_lin(Dim)] → embed → SE-ResBlocks → head">输入: concat[feats(6), Δp_lin(Dim)] → embed → SE-ResBlocks → head</text>
-        <text class="d" x="80" y="525" data-zh="输出: Δp_corr=(B,Dim) —— 误差补偿" data-en="Output: Δp_corr=(B,Dim) · correction">输出: Δp_corr=(B,Dim) —— 误差补偿</text>
-      </g>
-
-      <!-- Single-frame model -->
-      <g class="node" id="n_single">
-        <rect x="60" y="630" width="520" height="180"></rect>
-        <text class="h" x="80" y="660" data-zh="PinUavModel（单帧）" data-en="PinUavModel (single-frame)">PinUavModel（单帧）</text>
-        <text class="d" x="80" y="685" data-zh="1) Δp_lin = LeastSquaresLayer(p_prev, feats)" data-en="1) Δp_lin = LeastSquaresLayer(p_prev, feats)">1) Δp_lin = LeastSquaresLayer(p_prev, feats)</text>
-        <text class="d" x="80" y="705" data-zh="2) Δp_corr = ResidualMLP([feats, Δp_lin])" data-en="2) Δp_corr = ResidualMLP([feats, Δp_lin])">2) Δp_corr = ResidualMLP([feats, Δp_lin])</text>
-        <text class="d" x="80" y="725" data-zh="3) p_hat = p_prev + Δp_lin + Δp_corr" data-en="3) p_hat = p_prev + Δp_lin + Δp_corr">3) p_hat = p_prev + Δp_lin + Δp_corr</text>
-        <text class="d" x="80" y="745" data-zh="输出: p_hat=(B,Dim)" data-en="Output: p_hat=(B,Dim)">输出: p_hat=(B,Dim)</text>
-      </g>
-
-      <!-- Sequential model -->
-      <g class="node" id="n_seq">
-        <rect x="600" y="630" width="520" height="220"></rect>
-        <text class="h" x="620" y="660" data-zh="PinUavSeqModel（时序）" data-en="PinUavSeqModel (sequential)">PinUavSeqModel（时序）</text>
-        <text class="d" x="620" y="685" data-zh="循环 t∈[1..S]：" data-en="Loop t=1..S:">循环 t∈[1..S]：</text>
-        <text class="d" x="640" y="705" data-zh="a) Δp_ls_t = LeastSquaresLayer(p_prev, feats[:,t])" data-en="a) Δp_ls_t = LeastSquaresLayer(p_prev, feats[:,t])">a) Δp_ls_t = LeastSquaresLayer(p_prev, feats[:,t])</text>
-        <text class="d" x="640" y="725" data-zh="b) 拼接 [feats_t, Δp_ls_t] → LSTM 输入" data-en="b) Concat [feats_t, Δp_ls_t] → LSTM input">b) 拼接 [feats_t, Δp_ls_t] → LSTM 输入</text>
-        <text class="d" x="640" y="745" data-zh="c) p_prev ← p_prev + Δp_ls_t（物理先验累计）" data-en="c) p_prev ← p_prev + Δp_ls_t (phys prior)">c) p_prev ← p_prev + Δp_ls_t（物理先验累计）</text>
-        <text class="d" x="620" y="770" data-zh="LSTM 输出 → head → Δp_corr_seq；最终：" data-en="LSTM → head → Δp_corr_seq; final:">LSTM 输出 → head → Δp_corr_seq；最终：</text>
-        <text class="d" x="640" y="790" data-zh="p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq" data-en="p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq">p_hat = p_prev0 + cumsum(Δp_ls) + Δp_corr_seq</text>
-        <text class="d" x="620" y="810" data-zh="输出: p_hat=(B,S,Dim)" data-en="Output: p_hat=(B,S,Dim)">输出: p_hat=(B,S,Dim)</text>
-      </g>
-
-      <!-- Edges -->
-      <g class="edge">
-        <path d="M440 110 C 470 110, 470 110, 480 110" marker-end="url(#m1)"></path>
-      </g>
-
-      <!-- input -> phys -->
-      <g class="edge">
-        <path d="M600 160 C 600 190, 600 190, 600 210" marker-end="url(#m1)"></path>
-      </g>
-      <!-- phys -> mlp -->
-      <g class="edge">
-        <path d="M590 400 C 590 430, 590 430, 590 450" marker-end="url(#m1)"></path>
-      </g>
-      <!-- mlp -> single -->
-      <g class="edge">
-        <path d="M430 600 C 430 620, 430 620, 430 630" marker-end="url(#m1)"></path>
-      </g>
-      <!-- mlp -> seq -->
-      <g class="edge">
-        <path d="M750 600 C 750 620, 750 620, 750 630" marker-end="url(#m1)"></path>
-      </g>
-
-      <!-- IO badges -->
-      <g id="badges">
-        <!-- feats badge near input -->
-        <rect class="pill-bg" x="970" y="130" width="135" height="20"></rect>
-        <text class="pill" x="978" y="144">feats: (B,6), p_prev: (B,Dim)</text>
-
-        <!-- phys output -->
-        <rect class="pill-bg" x="860" y="340" width="130" height="20"></rect>
-        <text class="pill" x="868" y="354">Δp_lin: (B,Dim)</text>
-
-        <!-- mlp output -->
-        <rect class="pill-bg" x="860" y="515" width="130" height="20"></rect>
-        <text class="pill" x="868" y="529">Δp_corr: (B,Dim)</text>
-
-        <!-- single out -->
-        <rect class="pill-bg" x="290" y="790" width="120" height="20"></rect>
-        <text class="pill" x="298" y="804">p_hat: (B,Dim)</text>
-
-        <!-- seq out -->
-        <rect class="pill-bg" x="930" y="820" width="140" height="20"></rect>
-        <text class="pill" x="938" y="834">p_hat: (B,S,Dim)</text>
-      </g>
-
-      <!-- Notes -->
-      <text class="note" x="80" y="370" data-zh="Huber 权重缓解离群点；Tikhonov 正则稳定病态；Cholesky 高效解" data-en="Huber for outliers; Tikhonov for stability; Cholesky solve">Huber 权重缓解离群点；Tikhonov 正则稳定病态；Cholesky 高效解</text>
-      <text class="note" x="80" y="555" data-zh="SE 注意力在通道上重标定嵌入，残差连接保梯度流" data-en="SE recalibrates channels; residual keeps gradient flow">SE 注意力在通道上重标定嵌入，残差连接保梯度流</text>
-      <text class="kbd"  x="80" y="865" data-zh="实用提示：将 Δp_lin 拼入输入，显式暴露物理先验给学习器" data-en="Tip: concatenate Δp_lin to expose physics prior to learner">实用提示：将 Δp_lin 拼入输入，显式暴露物理先验给学习器</text>
-    </svg>
-  </section>
-
-  <div class="footer">
-    提示：左侧按钮可快速聚焦不同区域；下拉可切换中/英标注。
-  </div>
-</main>
-
-<script>
-  // Simple viewBox zoom presets
-  const svg = document.getElementById('flow');
-  const fitAll = () => svg.setAttribute('viewBox', '0 0 1200 920');
-  const zoomPhys = () => svg.setAttribute('viewBox', '40 190 1120 240');
-  const zoomMLP  = () => svg.setAttribute('viewBox', '40 440 1120 180');
-  const zoomSeq  = () => svg.setAttribute('viewBox', '40 620 1120 250');
-  document.getElementById('fitAll').onclick = fitAll;
-  document.getElementById('zoomPhys').onclick = zoomPhys;
-  document.getElementById('zoomMLP').onclick  = zoomMLP;
-  document.getElementById('zoomSeq').onclick  = zoomSeq;
-
-  // Language toggle
-  const select = document.getElementById('toggleLang');
-  function applyLang(lang){
-    document.querySelectorAll('[data-zh]').forEach(el=>{
-      el.textContent = lang==='en' ? el.getAttribute('data-en') : el.getAttribute('data-zh');
-    });
-  }
-  select.addEventListener('change', e=>applyLang(e.target.value));
-  applyLang('zh');
-</script>
+    // Language toggle
+    const select = document.getElementById('toggleLang');
+    function applyLang(lang) {
+      document.querySelectorAll('[data-zh]').forEach(el => {
+        el.textContent = lang === 'en' ? el.getAttribute('data-en') : el.getAttribute('data-zh');
+      });
+    }
+    select.addEventListener('change', e => applyLang(e.target.value));
+    applyLang('zh');
+  </script>
 </body>
+
 </html>
