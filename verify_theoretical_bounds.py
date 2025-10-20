@@ -1,206 +1,114 @@
 #!/usr/bin/env python3
 """
-验证理论极限的正确性
-通过厚椭圆带几何验证与线性化理论的一致性
+验证理论极限 (worst-case)
+-----------------------------------------------------------
+1) 允许的最大整周误差：每链路 |n_i| ≤ 6  ⇒  ‖n‖₂_max = 6√3
+2) 飞行走廊 Ω：用 Tx+3×Rx 构成的四边形按 70% 等比收缩
+3) 取 σ_min^worst = min_{p∈Ω} σ_min( G(p) )
+4) 理论半径 R = λ · 6√3 / σ_min^worst
+   用黄色虚线圆画出
+-----------------------------------------------------------
+依赖: numpy / scipy / matplotlib
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse, Polygon
-from matplotlib.collections import PatchCollection
-import sys
-import os
-from scipy.optimize import minimize
-from scipy.spatial.distance import pdist, squareform
+from matplotlib.patches import Polygon, Circle
+from matplotlib.path import Path  # 新增
+from scipy.optimize import root, minimize
+from scipy.spatial.distance import pdist
+import sys, os
 
-# 添加项目路径
+# ---------- 若仍需工程内模块, 保持不变 ----------
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 import src.config as config
 from src.detecting_region_info_generator import generate_detecting_region_infos
 
 
-def compute_phase_range(p, tx, rx):
-    """
-    计算相位测距 ρ(p) = ||p-T|| + ||p-R||
-    """
+# -------------------------------------------------
+# 基本几何与工具函数
+# -------------------------------------------------
+def phase_range(p, tx, rx):
     return np.linalg.norm(p - tx) + np.linalg.norm(p - rx)
 
 
-def generate_thick_ellipse_band(tx, rx, rho_hat, wavelength, resolution=100):
-    """
-    生成厚椭圆带：|ρ(p) - ρ̂| ≤ λ/2
-
-    Args:
-        tx, rx: 发射机和接收机位置
-        rho_hat: 观测到的相位测距
-        wavelength: 波长
-        resolution: 分辨率
-
-    Returns:
-        points: 厚椭圆带内的点集
-    """
-    # 计算椭圆参数
-    c = np.linalg.norm(tx - rx) / 2  # 半焦距
-    center = (tx + rx) / 2  # 椭圆中心
-
-    # 内椭圆和外椭圆的半长轴
-    a_inner = (rho_hat - wavelength / 2) / 2
-    a_outer = (rho_hat + wavelength / 2) / 2
-
-    if a_inner <= c or a_outer <= c:
-        return np.array([]).reshape(0, 2)
-
-    # 半短轴
-    b_inner = np.sqrt(a_inner**2 - c**2)
-    b_outer = np.sqrt(a_outer**2 - c**2)
-
-    # 椭圆方向
-    direction = rx - tx
-    angle = np.arctan2(direction[1], direction[0]) * 180 / np.pi
-
-    # 生成椭圆带内的点
-    points = []
-
-    # 创建网格
-    x_range = np.linspace(
-        center[0] - a_outer - 10, center[0] + a_outer + 10, resolution
-    )
-    y_range = np.linspace(
-        center[1] - b_outer - 10, center[1] + b_outer + 10, resolution
-    )
-
-    for x in x_range:
-        for y in y_range:
-            p = np.array([x, y])
-            rho = compute_phase_range(p, tx, rx)
-
-            if abs(rho - rho_hat) <= wavelength / 2:
-                points.append([x, y])
-
-    return np.array(points)
+def ellipse_equation(p, tx, rx, rho):
+    return phase_range(p, tx, rx) - rho
 
 
-def compute_feasible_region_intersection(
-    tx, receivers, rho_hats, wavelength, resolution=100
-):
-    """
-    计算三条厚椭圆带的交集 ℰ
-
-    Args:
-        tx: 发射机位置
-        receivers: 接收机位置列表
-        rho_hats: 观测到的相位测距列表
-        wavelength: 波长
-        resolution: 分辨率
-
-    Returns:
-        feasible_points: 可行域内的点集
-    """
-    print("Computing thick ellipse bands...")
-
-    # 计算每个接收机的厚椭圆带
-    bands = []
-    for i, (rx, rho_hat) in enumerate(zip(receivers, rho_hats)):
-        band_points = generate_thick_ellipse_band(
-            tx, rx, rho_hat, wavelength, resolution
-        )
-        bands.append(band_points)
-        print(f"Band {i+1}: {len(band_points)} points")
-
-    if not bands or any(len(band) == 0 for band in bands):
-        print("Warning: Some bands are empty")
-        return np.array([]).reshape(0, 2)
-
-    # 找到所有点的交集
-    print("Computing intersection...")
-
-    # 使用网格方法找交集
-    all_points = np.vstack(bands)
-    x_min, y_min = all_points.min(axis=0)
-    x_max, y_max = all_points.max(axis=0)
-
-    # 创建更细的网格
-    x_grid = np.linspace(x_min, x_max, resolution)
-    y_grid = np.linspace(y_min, y_max, resolution)
-
-    feasible_points = []
-
-    for x in x_grid:
-        for y in y_grid:
-            p = np.array([x, y])
-
-            # 检查是否在所有厚椭圆带内
-            in_all_bands = True
-            for rx, rho_hat in zip(receivers, rho_hats):
-                rho = compute_phase_range(p, tx, rx)
-                if abs(rho - rho_hat) > wavelength / 2:
-                    in_all_bands = False
-                    break
-
-            if in_all_bands:
-                feasible_points.append([x, y])
-
-    return np.array(feasible_points)
-
-
-def compute_diameter(feasible_points):
-    """
-    计算可行域直径 D = max ||p₁ - p₂||₂
-    """
-    if len(feasible_points) < 2:
-        return 0.0
-
-    # 计算所有点对之间的距离
-    distances = pdist(feasible_points)
-    return np.max(distances)
-
-
-def compute_geometry_matrix(p, tx, receivers):
-    """
-    计算几何矩阵 G
-    """
+def geometry_matrix(p, tx, receivers):
     rows = []
     for rx in receivers:
-        # 计算单位向量
-        u_t = (tx - p) / np.linalg.norm(tx - p)
-        u_r = (rx - p) / np.linalg.norm(rx - p)
-        rows.append(u_t + u_r)
-
+        rows.append(
+            (p - tx) / np.linalg.norm(p - tx) + (p - rx) / np.linalg.norm(p - rx)
+        )
     return np.vstack(rows)
 
 
-def compute_theoretical_radius(G, wavelength, n_vector):
-    """
-    计算理论半径 R = ||n||₂ λ / σ_min(G)
-    """
-    sigma_min = np.linalg.svd(G, compute_uv=False)[-1]
-    n_norm = np.linalg.norm(n_vector)
-    return n_norm * wavelength / sigma_min
+def find_ellipse_points(tx, rx, rho, num_points=361):
+    """数值采样法画椭圆"""
+    pts = []
+    for k in range(num_points):
+        theta = 2 * np.pi * k / num_points
+        d = np.array([np.cos(theta), np.sin(theta)])
+        lo, hi = 0.0, rho
+        for _ in range(30):
+            mid = (lo + hi) / 2
+            if phase_range(tx + mid * d, tx, rx) > rho:
+                hi = mid
+            else:
+                lo = mid
+        pts.append(tx + mid * d)
+    return np.array(pts)
 
 
+def find_ellipse_intersection(tx, rx1, rx2, rho1, rho2, guess):
+    def f(p):
+        return (
+            ellipse_equation(p, tx, rx1, rho1),
+            ellipse_equation(p, tx, rx2, rho2),
+        )
+
+    sol = root(f, guess, method="hybr")
+    return sol.x if sol.success else None
+
+
+# ---------- 新增：整条飞行走廊内最坏 σ_min(G) ----------
+def worst_sigma_in_area(tx, receivers, inner_vertices, grid_N=200):
+    """
+    在多边形 inner_vertices 围成的区域 Ω 中，网格采样求
+    σ_min^worst = min_{p∈Ω} σ_min(G(p))
+    """
+    poly_path = Path(inner_vertices)
+    xmin, ymin = inner_vertices.min(axis=0)
+    xmax, ymax = inner_vertices.max(axis=0)
+
+    xs = np.linspace(xmin, xmax, grid_N)
+    ys = np.linspace(ymin, ymax, grid_N)
+    xx, yy = np.meshgrid(xs, ys)
+    pts = np.column_stack([xx.ravel(), yy.ravel()])
+    pts = pts[poly_path.contains_points(pts)]
+
+    sigmas = []
+    for p in pts:
+        G = geometry_matrix(p, tx, receivers)
+        sigmas.append(np.linalg.svd(G, compute_uv=False)[-1])
+    return np.min(sigmas)
+
+
+# -------------------------------------------------
+# 主流程
+# -------------------------------------------------
 def verify_theoretical_bounds():
-    """
-    验证理论极限的正确性
-    """
-    print("=== Theoretical Bounds Verification ===")
-    print(
-        "Verifying consistency between thick ellipse band geometry and linearized theory"
-    )
-    print("=" * 70)
+    print("\n=== Ellipse Intersection Analysis ===")
+    print("分析椭圆组A/B/B'的交点情况和定位误差")
 
-    # 生成检测区域信息
+    # ---------- 获取场景 ----------
     region_infos = generate_detecting_region_infos(
         num_configurations=config.num_detecting_regions, seed=config.region_seed
     )
-
-    if not region_infos:
-        print("Failed to generate detecting region information")
-        return
-
     region_info = region_infos[0]
 
-    # 获取发射机和接收机位置
     tx = np.array(region_info.transmittor_position)
     receivers = [
         np.array(region_info.receiver_position_1),
@@ -208,633 +116,541 @@ def verify_theoretical_bounds():
         np.array(region_info.receiver_position_3),
     ]
 
-    print(f"Transmitter T: {tx}")
-    for i, rx in enumerate(receivers):
-        print(f"Receiver R{i+1}: {rx}")
-
-    # 设置参数
     wavelength = config.c / config.fc
-    print(f"Wavelength λ = {wavelength:.4f} m")
+    print(f"λ = {wavelength:.4f} m")
 
-    # 测试多个 (p_true, n) 组合
-    test_cases = [
-        # (p_true, n_vector)
-        (np.array([50.0, 30.0]), np.array([0, 0, 0])),  # 无整数偏差
-        (np.array([60.0, 40.0]), np.array([1, -1, 0])),  # 有整数偏差
-        (np.array([45.0, 25.0]), np.array([0, 1, -1])),  # 另一个组合
-        (np.array([55.0, 35.0]), np.array([2, -1, 1])),  # 较大偏差
-    ]
+    # ---------- 生成飞行走廊 Ω ----------
+    outer_vertices = [region_info.v1, region_info.v2, region_info.v3, region_info.v4]
+    outer_vertices = np.array(outer_vertices)
+    centroid = outer_vertices.mean(axis=0)
+    inner_vertices = centroid + 0.7 * (outer_vertices - centroid)  # 70% 缩小
 
-    results = []
+    # 位置A和B
+    xmin, ymin = inner_vertices.min(axis=0)
+    xmax, ymax = inner_vertices.max(axis=0)
+    p_A = np.array([xmin + 0.3 * (xmax - xmin), ymin + 0.4 * (ymax - ymin)])
+    direction = np.array([1.0, 0.5])
+    direction /= np.linalg.norm(direction)
+    p_B = p_A + 0.3 * direction
 
-    for case_idx, (p_true, n_vector) in enumerate(test_cases):
-        print(f"\n--- Test Case {case_idx + 1} ---")
-        print(f"True position: {p_true}")
-        print(f"Integer vector n: {n_vector}")
+    # 整周误差向量
+    n_vec = np.array([2, -3, 1])
 
-        # 1. 计算观测值
-        rho_hats = []
-        for rx in receivers:
-            rho_true = compute_phase_range(p_true, tx, rx)
-            rho_hat = rho_true + np.dot(n_vector, np.ones(3)) * wavelength  # 简化处理
-            rho_hats.append(rho_hat)
+    print(f"Position A (known): {p_A}")
+    print(f"Position B (true): {p_B}")
+    print(f"Integer cycle errors n: {n_vec}")
 
-        print(f"Observed ranges: {[f'{r:.2f}' for r in rho_hats]}")
+    # ---------- 量测 ρ ----------
+    rho_A = [phase_range(p_A, tx, rx) for rx in receivers]  # 椭圆组A
+    rho_B = [phase_range(p_B, tx, rx) for rx in receivers]  # 椭圆组B
+    rho_Bp = [r + n * wavelength for r, n in zip(rho_B, n_vec)]  # 椭圆组B'
 
-        # 2. 计算厚椭圆带交集 ℰ
-        feasible_points = compute_feasible_region_intersection(
-            tx, receivers, rho_hats, wavelength, resolution=50
+    print(f"Ellipse group A ranges: {[f'{r:.2f}' for r in rho_A]}")
+    print(f"Ellipse group B ranges: {[f'{r:.2f}' for r in rho_B]}")
+    print(f"Ellipse group B' ranges: {[f'{r:.2f}' for r in rho_Bp]}")
+
+    # ---------- 计算理论半径 ----------
+    sigma_worst = worst_sigma_in_area(tx, receivers, inner_vertices)
+    N_WORST_NORM = 6 * np.sqrt(3)  # = 10.392  (最坏 ‖n‖₂)
+    R_theory = wavelength * N_WORST_NORM / sigma_worst
+    print(f"σ_min^worst over Ω = {sigma_worst:.6f}")
+    print(f"R (worst case) = {R_theory:.3f} m")
+
+    # ---------- 求椭圆组A的交点（应该交于位置A） ----------
+    print("\n=== 椭圆组A的交点分析 ===")
+    A_intersections = []
+    pairs = [(0, 1), (0, 2), (1, 2)]
+    for i, j in pairs:
+        inter = find_ellipse_intersection(
+            tx, receivers[i], receivers[j], rho_A[i], rho_A[j], p_A
         )
+        if inter is not None:
+            A_intersections.append(inter)
+            print(f"R{i+1}-R{j+1} intersection: ({inter[0]:.3f}, {inter[1]:.3f})")
 
-        if len(feasible_points) == 0:
-            print("Warning: No feasible points found")
-            continue
-
-        print(f"Feasible region contains {len(feasible_points)} points")
-
-        # 3. 计算直径 D
-        diameter_D = compute_diameter(feasible_points)
-        print(f"Feasible region diameter D = {diameter_D:.4f} m")
-
-        # 4. 计算几何矩阵和理论半径
-        G = compute_geometry_matrix(p_true, tx, receivers)
-        sigma_min = np.linalg.svd(G, compute_uv=False)[-1]
-        theoretical_radius_R = compute_theoretical_radius(G, wavelength, n_vector)
-        theoretical_diameter_2R = 2 * theoretical_radius_R
-
-        print(f"Minimum singular value σ_min = {sigma_min:.6f}")
-        print(f"Theoretical radius R = {theoretical_radius_R:.4f} m")
-        print(f"Theoretical diameter 2R = {theoretical_diameter_2R:.4f} m")
-
-        # 5. 验证不等式 D ≤ 2R
-        inequality_satisfied = diameter_D <= theoretical_diameter_2R
-        print(
-            f"Inequality D ≤ 2R: {diameter_D:.4f} ≤ {theoretical_diameter_2R:.4f} = {inequality_satisfied}"
+    # ---------- 求椭圆组B的交点（应该交于位置B） ----------
+    print("\n=== 椭圆组B的交点分析 ===")
+    B_intersections = []
+    for i, j in pairs:
+        inter = find_ellipse_intersection(
+            tx, receivers[i], receivers[j], rho_B[i], rho_B[j], p_B
         )
+        if inter is not None:
+            B_intersections.append(inter)
+            print(f"R{i+1}-R{j+1} intersection: ({inter[0]:.3f}, {inter[1]:.3f})")
 
-        # 6. 计算紧贴程度
-        tightness_ratio = (
-            diameter_D / theoretical_diameter_2R if theoretical_diameter_2R > 0 else 0
+    # ---------- 求椭圆组B'的交点（误差三角形） ----------
+    print("\n=== 椭圆组B'的交点分析 ===")
+    Bp_intersections = []
+    for i, j in pairs:
+        inter = find_ellipse_intersection(
+            tx, receivers[i], receivers[j], rho_Bp[i], rho_Bp[j], p_B
         )
-        print(f"Tightness ratio D/(2R) = {tightness_ratio:.4f}")
+        if inter is not None:
+            Bp_intersections.append(inter)
+            print(f"R{i+1}-R{j+1} intersection: ({inter[0]:.3f}, {inter[1]:.3f})")
 
-        results.append(
-            {
-                "case": case_idx + 1,
-                "p_true": p_true,
-                "n_vector": n_vector,
-                "diameter_D": diameter_D,
-                "theoretical_diameter_2R": theoretical_diameter_2R,
-                "sigma_min": sigma_min,
-                "inequality_satisfied": inequality_satisfied,
-                "tightness_ratio": tightness_ratio,
-                "feasible_points": feasible_points,
-            }
-        )
+    # ---------- 误差分析 ----------
+    if len(Bp_intersections) == 3:
+        Bp_intersections = np.array(Bp_intersections)
+        triangle_diameter = np.max(pdist(Bp_intersections))
+        print(f"\nError triangle diameter: {triangle_diameter:.3f} m")
 
-        # 可视化（仅对第一个测试用例）
-        if case_idx == 0:
-            visualize_verification(
-                tx,
-                receivers,
-                feasible_points,
-                p_true,
-                diameter_D,
-                theoretical_diameter_2R,
-                wavelength,
-            )
+        # 计算BB'的极值
+        bb_distances = [np.linalg.norm(vertex - p_B) for vertex in Bp_intersections]
+        min_bb_distance = min(bb_distances)
+        max_bb_distance = max(bb_distances)
+        print(f"BB' distance range: [{min_bb_distance:.3f}, {max_bb_distance:.3f}] m")
+        # print(
+        #     f"Theoretical bound satisfied: {'✓' if max_bb_distance <= R_theory else '✗'}"
+        # )
 
-    # 总结结果
-    print(f"\n=== Verification Summary ===")
-    satisfied_cases = sum(1 for r in results if r["inequality_satisfied"])
-    print(f"Inequality satisfied in {satisfied_cases}/{len(results)} cases")
+    # ---------- 四子图可视化 ----------
+    visualize_four_panel_analysis(
+        tx,
+        receivers,
+        p_A,
+        p_B,
+        rho_A,
+        rho_B,
+        rho_Bp,
+        A_intersections,
+        B_intersections,
+        Bp_intersections,
+        R_theory,
+        wavelength,
+        inner_vertices,
+    )
 
-    if results:
-        avg_tightness = np.mean([r["tightness_ratio"] for r in results])
-        print(f"Average tightness ratio: {avg_tightness:.4f}")
+    # ---------- 图5：以A点为原点的理论圆分析 ----------
+    visualize_analysis_from_A(
+        tx,
+        receivers,
+        p_A,
+        p_B,
+        rho_A,
+        rho_B,
+        rho_Bp,
+        A_intersections,
+        B_intersections,
+        Bp_intersections,
+        R_theory,
+        wavelength,
+        inner_vertices,
+    )
 
-        print(f"\nDetailed results:")
-        for r in results:
-            status = "✓" if r["inequality_satisfied"] else "✗"
-            print(
-                f"Case {r['case']}: D={r['diameter_D']:.3f}, 2R={r['theoretical_diameter_2R']:.3f}, "
-                f"ratio={r['tightness_ratio']:.3f} {status}"
-            )
+    return {
+        "A_intersections": A_intersections,
+        "B_intersections": B_intersections,
+        "Bp_intersections": Bp_intersections,
+        "theoretical_radius": R_theory,
+        "triangle_diameter": triangle_diameter if len(Bp_intersections) == 3 else None,
+        "bb_distance_range": (
+            [min_bb_distance, max_bb_distance] if len(Bp_intersections) == 3 else None
+        ),
+    }
 
-    return results
 
-
-def visualize_thick_ellipse_bands(
-    tx, receivers, p_true, wavelength, resolution=100, thickness_factor=100
+def visualize_four_panel_analysis(
+    tx,
+    receivers,
+    p_A,
+    p_B,
+    rho_A,
+    rho_B,
+    rho_Bp,
+    A_intersections,
+    B_intersections,
+    Bp_intersections,
+    R_theory,
+    wavelength,
+    inner_vertices,
 ):
     """
-    可视化厚椭圆带
-
-    Args:
-        thickness_factor: 厚度放大因子，用于可视化（默认100倍）
+    四子图可视化：椭圆组A交点、椭圆组B交点、椭圆组B'交点、误差分析
     """
-    print("Visualizing thick ellipse bands...")
-    print(f"Using thickness factor: {thickness_factor}x (for visualization only)")
-
-    # 计算观测值
-    rho_hats = []
-    for rx in receivers:
-        rho_true = compute_phase_range(p_true, tx, rx)
-        rho_hats.append(rho_true)
-
-    print(f"True position: {p_true}")
-    print(f"Observed ranges: {[f'{r:.2f}' for r in rho_hats]}")
-    print(f"Actual wavelength λ = {wavelength:.4f} m")
-    print(f"Visualized thickness = {wavelength * thickness_factor / 2:.4f} m")
-
-    # 创建图形
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-
     colors = ["red", "green", "blue"]
 
-    # 单独显示每个厚椭圆带
-    for i, (rx, rho_hat, color) in enumerate(zip(receivers, rho_hats, colors)):
-        ax = axes[i // 2, i % 2]
+    # 子图1：椭圆组A的交点（应该交于位置A）
+    ax = axes[0, 0]
+    ax.set_title("Ellipse Group A Intersections (Known Position A)")
 
-        # 生成厚椭圆带（使用放大的厚度）
-        band_points = generate_thick_ellipse_band(
-            tx, rx, rho_hat, wavelength * thickness_factor, resolution
-        )
+    # 绘制椭圆组A
+    for i, (rx, rho, color) in enumerate(zip(receivers, rho_A, colors)):
+        pts = find_ellipse_points(tx, rx, rho)
+        ax.plot(pts[:, 0], pts[:, 1], c=color, alpha=0.7, linewidth=2)
 
-        if len(band_points) > 0:
+    # 绘制交点
+    if len(A_intersections) >= 3:
+        for i, intersection in enumerate(A_intersections[:3]):
             ax.scatter(
-                band_points[:, 0],
-                band_points[:, 1],
-                c=color,
-                s=1,
-                alpha=0.6,
-                label=f"Band {i+1}",
+                intersection[0],
+                intersection[1],
+                c="purple",
+                s=100,
+                marker="o",
+                zorder=6,
+                label="Intersections" if i == 0 else "",
             )
 
-        # 标记发射机和接收机
-        ax.scatter(
-            tx[0], tx[1], c="red", s=100, marker="^", label="Transmitter T", zorder=5
-        )
-        ax.scatter(
-            rx[0], rx[1], c=color, s=100, marker="s", label=f"Receiver R{i+1}", zorder=5
-        )
-
-        # 标记真实位置
-        ax.scatter(
-            p_true[0],
-            p_true[1],
-            c="black",
-            s=100,
-            marker="*",
-            label="True Position",
-            zorder=6,
-        )
-
-        # 绘制理论椭圆边界（使用放大的厚度）
-        c = np.linalg.norm(tx - rx) / 2
-        center = (tx + rx) / 2
-        a_inner = (rho_hat - wavelength * thickness_factor / 2) / 2
-        a_outer = (rho_hat + wavelength * thickness_factor / 2) / 2
-
-        if a_inner > c and a_outer > c:
-            b_inner = np.sqrt(a_inner**2 - c**2)
-            b_outer = np.sqrt(a_outer**2 - c**2)
-            direction = rx - tx
-            angle = np.arctan2(direction[1], direction[0]) * 180 / np.pi
-
-            # 内椭圆
-            ellipse_inner = Ellipse(
-                center,
-                2 * a_inner,
-                2 * b_inner,
-                angle=angle,
-                fill=False,
-                edgecolor=color,
-                linestyle="-",
-                linewidth=2,
-                label=f"Inner ellipse (ρ-λ/2)",
-            )
-            ax.add_patch(ellipse_inner)
-
-            # 外椭圆
-            ellipse_outer = Ellipse(
-                center,
-                2 * a_outer,
-                2 * b_outer,
-                angle=angle,
-                fill=False,
-                edgecolor=color,
-                linestyle="--",
-                linewidth=2,
-                label=f"Outer ellipse (ρ+λ/2)",
-            )
-            ax.add_patch(ellipse_outer)
-
-        ax.set_xlabel("X (m)")
-        ax.set_ylabel("Y (m)")
-        ax.set_title(
-            f"Thick Ellipse Band {i+1}: |ρ(p) - {rho_hat:.2f}| ≤ {wavelength*thickness_factor/2:.3f} (×{thickness_factor})"
-        )
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.axis("equal")
-
-    # 第四个图：所有厚椭圆带的交集
-    ax = axes[1, 1]
-
-    # 计算交集（使用放大的厚度）
-    feasible_points = compute_feasible_region_intersection(
-        tx, receivers, rho_hats, wavelength * thickness_factor, resolution=50
-    )
-
-    if len(feasible_points) > 0:
-        ax.scatter(
-            feasible_points[:, 0],
-            feasible_points[:, 1],
-            c="purple",
-            s=2,
-            alpha=0.8,
-            label="Intersection ℰ",
-        )
-
-    # 标记发射机和接收机
+    # 关键点
     ax.scatter(
-        tx[0], tx[1], c="red", s=100, marker="^", label="Transmitter T", zorder=5
+        tx[0], tx[1], c="black", s=100, marker="^", label="Transmitter T", zorder=5
     )
-    for i, (rx, color) in enumerate(zip(receivers, colors)):
+    for i, rx in enumerate(receivers):
         ax.scatter(
             rx[0],
             rx[1],
-            c=color,
+            c=colors[i],
             s=80,
             marker="s",
             label=f"Receiver R{i+1}" if i == 0 else "",
             zorder=5,
         )
-
-    # 标记真实位置
     ax.scatter(
-        p_true[0],
-        p_true[1],
-        c="black",
-        s=100,
-        marker="*",
-        label="True Position",
-        zorder=6,
+        p_A[0], p_A[1], c="black", s=150, marker="*", label="Position A", zorder=6
     )
-
-    # 绘制所有椭圆边界（使用放大的厚度）
-    for i, (rx, rho_hat, color) in enumerate(zip(receivers, rho_hats, colors)):
-        c = np.linalg.norm(tx - rx) / 2
-        center = (tx + rx) / 2
-        a_inner = (rho_hat - wavelength * thickness_factor / 2) / 2
-        a_outer = (rho_hat + wavelength * thickness_factor / 2) / 2
-
-        if a_inner > c and a_outer > c:
-            b_inner = np.sqrt(a_inner**2 - c**2)
-            b_outer = np.sqrt(a_outer**2 - c**2)
-            direction = rx - tx
-            angle = np.arctan2(direction[1], direction[0]) * 180 / np.pi
-
-            # 内椭圆
-            ellipse_inner = Ellipse(
-                center,
-                2 * a_inner,
-                2 * b_inner,
-                angle=angle,
-                fill=False,
-                edgecolor=color,
-                linestyle="-",
-                linewidth=1.5,
-                alpha=0.7,
-            )
-            ax.add_patch(ellipse_inner)
-
-            # 外椭圆
-            ellipse_outer = Ellipse(
-                center,
-                2 * a_outer,
-                2 * b_outer,
-                angle=angle,
-                fill=False,
-                edgecolor=color,
-                linestyle="--",
-                linewidth=1.5,
-                alpha=0.7,
-            )
-            ax.add_patch(ellipse_outer)
 
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
-    ax.set_title(
-        f"Intersection of All Thick Ellipse Bands (×{thickness_factor} thickness)"
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axis("equal")
+
+    # 子图2：椭圆组B的交点（应该交于位置B）
+    ax = axes[0, 1]
+    ax.set_title("Ellipse Group B Intersections (True Position B)")
+
+    # 绘制椭圆组B
+    for i, (rx, rho, color) in enumerate(zip(receivers, rho_B, colors)):
+        pts = find_ellipse_points(tx, rx, rho)
+        ax.plot(pts[:, 0], pts[:, 1], c=color, alpha=0.7, linewidth=2, linestyle="--")
+
+    # 绘制交点
+    if len(B_intersections) >= 3:
+        for i, intersection in enumerate(B_intersections[:3]):
+            ax.scatter(
+                intersection[0],
+                intersection[1],
+                c="purple",
+                s=100,
+                marker="o",
+                zorder=6,
+                label="Intersections" if i == 0 else "",
+            )
+
+    # 关键点
+    ax.scatter(
+        tx[0], tx[1], c="black", s=100, marker="^", label="Transmitter T", zorder=5
     )
+    for i, rx in enumerate(receivers):
+        ax.scatter(
+            rx[0],
+            rx[1],
+            c=colors[i],
+            s=80,
+            marker="s",
+            label=f"Receiver R{i+1}" if i == 0 else "",
+            zorder=5,
+        )
+    ax.scatter(
+        p_B[0], p_B[1], c="green", s=150, marker="*", label="Position B", zorder=6
+    )
+
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axis("equal")
+
+    # 子图3：椭圆组B'的交点（误差三角形）
+    ax = axes[1, 0]
+    ax.set_title("Ellipse Group B' Intersections (Integer Cycle Errors)")
+
+    # 绘制椭圆组B'
+    for i, (rx, rho, color) in enumerate(zip(receivers, rho_Bp, colors)):
+        pts = find_ellipse_points(tx, rx, rho)
+        ax.plot(pts[:, 0], pts[:, 1], c=color, alpha=0.7, linewidth=2)
+
+    # 绘制误差三角形
+    if len(Bp_intersections) >= 3:
+        Bp_array = np.array(Bp_intersections[:3])
+        triangle = Polygon(
+            Bp_array,
+            fill=False,
+            edgecolor="purple",
+            linewidth=2,
+            linestyle=":",
+            label="Error Triangle",
+        )
+        ax.add_patch(triangle)
+        for i, intersection in enumerate(Bp_array):
+            ax.scatter(
+                intersection[0],
+                intersection[1],
+                c="purple",
+                s=100,
+                marker="o",
+                zorder=6,
+                label="Intersections" if i == 0 else "",
+            )
+
+    # 关键点
+    ax.scatter(
+        tx[0], tx[1], c="black", s=100, marker="^", label="Transmitter T", zorder=5
+    )
+    for i, rx in enumerate(receivers):
+        ax.scatter(
+            rx[0],
+            rx[1],
+            c=colors[i],
+            s=80,
+            marker="s",
+            label=f"Receiver R{i+1}" if i == 0 else "",
+            zorder=5,
+        )
+    ax.scatter(
+        p_B[0], p_B[1], c="green", s=150, marker="*", label="Position B", zorder=6
+    )
+
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axis("equal")
+
+    # 子图4：误差分析
+    ax = axes[1, 1]
+    ax.set_title("Positioning Error Analysis")
+
+    # 绘制理论圆（橙色虚线）
+    circle = Circle(
+        p_B,
+        R_theory,
+        fill=False,
+        edgecolor="orange",
+        linewidth=2,
+        linestyle="--",
+        label=f"Theoretical Bound R={R_theory:.3f}m",
+    )
+    ax.add_patch(circle)
+
+    # 绘制误差三角形
+    if len(Bp_intersections) >= 3:
+        Bp_array = np.array(Bp_intersections[:3])
+        triangle = Polygon(
+            Bp_array,
+            fill=False,
+            edgecolor="purple",
+            linewidth=2,
+            linestyle=":",
+            label="Error Triangle",
+        )
+        ax.add_patch(triangle)
+        ax.scatter(
+            Bp_array[:, 0],
+            Bp_array[:, 1],
+            c="purple",
+            s=100,
+            marker="o",
+            label="B' Boundary Points",
+            zorder=6,
+        )
+
+    # 关键点
+    ax.scatter(
+        p_B[0], p_B[1], c="green", s=150, marker="*", label="Position B", zorder=6
+    )
+
+    # 添加误差分析文本
+    if len(Bp_intersections) >= 3:
+        bb_distances = [np.linalg.norm(vertex - p_B) for vertex in Bp_intersections[:3]]
+        min_bb_distance = min(bb_distances)
+        max_bb_distance = max(bb_distances)
+        triangle_diameter = np.max(pdist(Bp_array))
+
+        result_text = (
+            f"BB' Distance Range: [{min_bb_distance:.3f}, {max_bb_distance:.3f}] m\n"
+        )
+        result_text += f"Theoretical Bound: {R_theory:.3f} m\n"
+        result_text += f"Triangle Diameter: {triangle_diameter:.3f} m\n"
+        # result_text += f'Bound Satisfied: {"✓" if max_bb_distance <= R_theory else "✗"}'
+
+        bound_satisfied = max_bb_distance <= R_theory
+    else:
+        result_text = "Insufficient intersections for analysis"
+        bound_satisfied = False
+
+    ax.text(
+        0.05,
+        0.95,
+        result_text,
+        transform=ax.transAxes,
+        verticalalignment="top",
+        fontsize=10,
+        fontweight="bold",
+        bbox=dict(
+            boxstyle="round",
+            facecolor="lightgreen" if bound_satisfied else "lightcoral",
+        ),
+    )
+
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.axis("equal")
 
     plt.tight_layout()
-    plt.savefig("thick_ellipse_bands_visualization.png", dpi=300, bbox_inches="tight")
+    plt.savefig("ellipse_analysis_4panels.png", dpi=300, bbox_inches="tight")
     plt.show()
 
-    print(
-        f"\nThick ellipse bands visualization saved as: thick_ellipse_bands_visualization.png"
-    )
-
-    return feasible_points
+    print(f"\nFour-panel analysis saved as: ellipse_analysis_4panels.png")
 
 
-def visualize_verification(
+def visualize_analysis_from_A(
     tx,
     receivers,
-    feasible_points,
-    p_true,
-    diameter_D,
-    theoretical_diameter_2R,
+    p_A,
+    p_B,
+    rho_A,
+    rho_B,
+    rho_Bp,
+    A_intersections,
+    B_intersections,
+    Bp_intersections,
+    R_theory,
     wavelength,
+    inner_vertices,
 ):
     """
-    可视化验证结果
+    图5：以A点为原点的理论圆分析
+    分析误差三角形是否在以A为中心的理论圆内
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    colors = ["red", "green", "blue"]
 
-    # 左图：厚椭圆带和可行域
-    ax1.scatter(
-        feasible_points[:, 0],
-        feasible_points[:, 1],
-        c="lightblue",
-        s=1,
-        alpha=0.6,
-        label="Feasible Region ℰ",
+    ax.set_title("Analysis from Position A (Theoretical Bound)")
+
+    # 绘制椭圆组B'（在相交三角形处的边界）
+    for i, (rx, rho, color) in enumerate(zip(receivers, rho_Bp, colors)):
+        pts = find_ellipse_points(tx, rx, rho)
+        ax.plot(
+            pts[:, 0],
+            pts[:, 1],
+            c=color,
+            alpha=0.6,
+            linewidth=1.5,
+            label=f"Ellipse B'{i+1}" if i == 0 else "",
+        )
+
+    # 绘制以A为中心的理论圆（橙色虚线）
+    circle_A = Circle(
+        p_A,
+        R_theory,
+        fill=False,
+        edgecolor="orange",
+        linewidth=2,
+        linestyle="--",
+        label=f"Theoretical Bound from A (R={R_theory:.3f}m)",
     )
+    ax.add_patch(circle_A)
 
-    # 标记发射机和接收机
-    ax1.scatter(
-        tx[0], tx[1], c="red", s=100, marker="^", label="Transmitter T", zorder=5
+    # 绘制误差三角形
+    if len(Bp_intersections) >= 3:
+        Bp_array = np.array(Bp_intersections[:3])
+        triangle = Polygon(
+            Bp_array,
+            fill=False,
+            edgecolor="purple",
+            linewidth=2,
+            linestyle=":",
+            label="Error Triangle",
+        )
+        ax.add_patch(triangle)
+        ax.scatter(
+            Bp_array[:, 0],
+            Bp_array[:, 1],
+            c="purple",
+            s=100,
+            marker="o",
+            label="B' Boundary Points",
+            zorder=6,
+        )
+
+    # 关键点
+    ax.scatter(
+        tx[0], tx[1], c="black", s=100, marker="^", label="Transmitter T", zorder=5
     )
     for i, rx in enumerate(receivers):
-        ax1.scatter(
+        ax.scatter(
             rx[0],
             rx[1],
-            c="blue",
+            c=colors[i],
             s=80,
             marker="s",
             label=f"Receiver R{i+1}" if i == 0 else "",
             zorder=5,
         )
-
-    # 标记真实位置
-    ax1.scatter(
-        p_true[0],
-        p_true[1],
-        c="green",
-        s=100,
-        marker="*",
-        label="True Position",
-        zorder=6,
+    ax.scatter(
+        p_A[0], p_A[1], c="black", s=150, marker="*", label="Position A", zorder=6
+    )
+    ax.scatter(
+        p_B[0], p_B[1], c="green", s=150, marker="*", label="Position B", zorder=6
     )
 
-    # 绘制理论半径圆
-    circle = plt.Circle(
-        p_true,
-        theoretical_diameter_2R / 2,
-        fill=False,
-        edgecolor="red",
-        linestyle="--",
-        linewidth=2,
-        label=f"Theoretical Radius R={theoretical_diameter_2R/2:.2f}m",
-    )
-    ax1.add_patch(circle)
+    # 添加分析文本
+    if len(Bp_intersections) >= 3:
+        Bp_array = np.array(Bp_intersections[:3])
 
-    ax1.set_xlabel("X (m)")
-    ax1.set_ylabel("Y (m)")
-    ax1.set_title("Thick Ellipse Bands and Feasible Region")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.axis("equal")
+        # 计算从A点到三角形顶点的距离
+        aa_distances = [np.linalg.norm(vertex - p_A) for vertex in Bp_intersections[:3]]
+        min_aa_distance = min(aa_distances)
+        max_aa_distance = max(aa_distances)
+        triangle_diameter = np.max(pdist(Bp_array))
 
-    # 右图：直径比较
-    categories = ["Geometric\nDiameter D", "Theoretical\nDiameter 2R"]
-    values = [diameter_D, theoretical_diameter_2R]
-    colors = ["lightblue", "lightcoral"]
+        # 检查三角形是否在圆内
+        triangle_in_circle = max_aa_distance <= R_theory
 
-    bars = ax2.bar(categories, values, color=colors, alpha=0.7, edgecolor="black")
-    ax2.set_ylabel("Diameter (m)")
-    ax2.set_title("Diameter Comparison")
-    ax2.grid(True, alpha=0.3)
-
-    # 添加数值标签
-    for bar, value in zip(bars, values):
-        ax2.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.1,
-            f"{value:.3f}",
-            ha="center",
-            va="bottom",
-            fontweight="bold",
+        result_text = (
+            f"AA' Distance Range: [{min_aa_distance:.3f}, {max_aa_distance:.3f}] m\n"
         )
+        result_text += f"Theoretical Bound from A: {R_theory:.3f} m\n"
+        result_text += f"Triangle Diameter: {triangle_diameter:.3f} m\n"
+        result_text += f'Triangle in Circle: {"✓" if triangle_in_circle else "✗"}'
 
-    # 添加不等式验证
-    inequality_text = f"D ≤ 2R: {diameter_D:.3f} ≤ {theoretical_diameter_2R:.3f}\n"
-    inequality_text += (
-        f"✓ Verified" if diameter_D <= theoretical_diameter_2R else f"✗ Failed"
-    )
-    ax2.text(
-        0.5,
+        bound_satisfied = triangle_in_circle
+    else:
+        result_text = "Insufficient intersections for analysis"
+        bound_satisfied = False
+
+    ax.text(
+        0.05,
         0.95,
-        inequality_text,
-        transform=ax2.transAxes,
-        ha="center",
-        va="top",
+        result_text,
+        transform=ax.transAxes,
+        verticalalignment="top",
         fontsize=12,
         fontweight="bold",
         bbox=dict(
             boxstyle="round",
-            facecolor=(
-                "lightgreen" if diameter_D <= theoretical_diameter_2R else "lightcoral"
-            ),
+            facecolor="lightgreen" if bound_satisfied else "lightcoral",
         ),
     )
 
-    plt.tight_layout()
-    plt.savefig("theoretical_bounds_verification.png", dpi=300, bbox_inches="tight")
-    plt.show()
-
-    print(f"\nVisualization saved as: theoretical_bounds_verification.png")
-
-
-def analyze_geometry_quality():
-    """
-    分析几何质量对理论紧贴程度的影响
-    """
-    print(f"\n=== Geometry Quality Analysis ===")
-
-    # 生成检测区域信息
-    region_infos = generate_detecting_region_infos(
-        num_configurations=config.num_detecting_regions, seed=config.region_seed
-    )
-
-    if not region_infos:
-        return
-
-    region_info = region_infos[0]
-    tx = np.array(region_info.transmittor_position)
-    receivers = [
-        np.array(region_info.receiver_position_1),
-        np.array(region_info.receiver_position_2),
-        np.array(region_info.receiver_position_3),
-    ]
-
-    wavelength = config.c / config.fc
-
-    # 在区域内采样多个位置
-    outer_vertices = [region_info.v1, region_info.v2, region_info.v3, region_info.v4]
-    centroid = np.mean(outer_vertices, axis=0)
-    inner_scale_factor = 0.7
-    inner_vertices = [
-        centroid + (vertex - centroid) * inner_scale_factor for vertex in outer_vertices
-    ]
-
-    inner_vertices_array = np.array(inner_vertices)
-    xmin, ymin = inner_vertices_array.min(axis=0)
-    xmax, ymax = inner_vertices_array.max(axis=0)
-
-    # 采样点
-    nx, ny = 10, 10
-    xs = np.linspace(xmin, xmax, nx)
-    ys = np.linspace(ymin, ymax, ny)
-
-    sigma_mins = []
-    tightness_ratios = []
-
-    print("Sampling geometry quality across the region...")
-
-    for x in xs:
-        for y in ys:
-            p = np.array([x, y])
-            G = compute_geometry_matrix(p, tx, receivers)
-            sigma_min = np.linalg.svd(G, compute_uv=False)[-1]
-            sigma_mins.append(sigma_min)
-
-            # 简化的紧贴程度估计（基于几何直觉）
-            # 几何差（σ_min小）→ 紧贴程度高
-            # 几何好（σ_min大）→ 紧贴程度低
-            estimated_tightness = 1.0 / (1.0 + sigma_min * 10)  # 经验公式
-            tightness_ratios.append(estimated_tightness)
-
-    sigma_mins = np.array(sigma_mins)
-    tightness_ratios = np.array(tightness_ratios)
-
-    print(
-        f"Minimum singular value range: [{sigma_mins.min():.6f}, {sigma_mins.max():.6f}]"
-    )
-    print(f"Average σ_min: {sigma_mins.mean():.6f}")
-    print(
-        f"Estimated tightness range: [{tightness_ratios.min():.4f}, {tightness_ratios.max():.4f}]"
-    )
-
-    # 可视化几何质量分布
-    plt.figure(figsize=(12, 5))
-
-    plt.subplot(1, 2, 1)
-    plt.scatter(sigma_mins, tightness_ratios, alpha=0.6)
-    plt.xlabel("Minimum Singular Value σ_min")
-    plt.ylabel("Estimated Tightness Ratio")
-    plt.title("Geometry Quality vs Tightness")
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(1, 2, 2)
-    plt.hist(sigma_mins, bins=20, alpha=0.7, edgecolor="black")
-    plt.xlabel("Minimum Singular Value σ_min")
-    plt.ylabel("Frequency")
-    plt.title("Distribution of σ_min")
-    plt.grid(True, alpha=0.3)
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axis("equal")
 
     plt.tight_layout()
-    plt.savefig("geometry_quality_analysis.png", dpi=300, bbox_inches="tight")
+    plt.savefig("ellipse_analysis_from_A.png", dpi=300, bbox_inches="tight")
     plt.show()
 
-    print(f"\nGeometry quality analysis saved as: geometry_quality_analysis.png")
-
-
-def visualize_thick_ellipse_bands_only():
-    """
-    仅可视化厚椭圆带，不进行理论验证
-    """
-    print("=== Thick Ellipse Bands Visualization ===")
-    print("Visualizing thick ellipse bands for better understanding")
-    print("=" * 50)
-
-    # 生成检测区域信息
-    region_infos = generate_detecting_region_infos(
-        num_configurations=config.num_detecting_regions, seed=config.region_seed
-    )
-
-    if not region_infos:
-        print("Failed to generate detecting region information")
-        return
-
-    region_info = region_infos[0]
-
-    # 获取发射机和接收机位置
-    tx = np.array(region_info.transmittor_position)
-    receivers = [
-        np.array(region_info.receiver_position_1),
-        np.array(region_info.receiver_position_2),
-        np.array(region_info.receiver_position_3),
-    ]
-
-    print(f"Transmitter T: {tx}")
-    for i, rx in enumerate(receivers):
-        print(f"Receiver R{i+1}: {rx}")
-
-    # 设置参数
-    wavelength = config.c / config.fc
-    print(f"Wavelength λ = {wavelength:.4f} m")
-
-    # 选择一个测试位置
-    p_true = np.array([50.0, 30.0])
-    print(f"Test position: {p_true}")
-
-    # 可视化厚椭圆带（使用100倍厚度放大因子）
-    feasible_points = visualize_thick_ellipse_bands(
-        tx, receivers, p_true, wavelength, thickness_factor=100
-    )
-
-    if len(feasible_points) > 0:
-        diameter_D = compute_diameter(feasible_points)
-        print(f"\nFeasible region diameter D = {diameter_D:.4f} m")
-        print(f"Feasible region contains {len(feasible_points)} points")
-    else:
-        print("No feasible points found")
+    print(f"\nAnalysis from A saved as: ellipse_analysis_from_A.png")
 
 
 if __name__ == "__main__":
-    import sys
-
-    # 检查命令行参数
-    if len(sys.argv) > 1 and sys.argv[1] == "--visualize-only":
-        # 仅可视化厚椭圆带
-        try:
-            visualize_thick_ellipse_bands_only()
-        except Exception as e:
-            print(f"Error occurred during visualization: {e}")
-            import traceback
-
-            traceback.print_exc()
-    else:
-        # 完整的理论验证
-        try:
-            results = verify_theoretical_bounds()
-            analyze_geometry_quality()
-
-            print(f"\n=== Verification Complete ===")
-            print("Theoretical bounds verification completed successfully!")
-            print("\nTo visualize thick ellipse bands only, run:")
-            print("python verify_theoretical_bounds.py --visualize-only")
-
-        except Exception as e:
-            print(f"Error occurred during verification: {e}")
-            import traceback
-
-            traceback.print_exc()
+    verify_theoretical_bounds()

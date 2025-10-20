@@ -192,7 +192,7 @@ def load_dataset(path):
     """从指定路径加载数据集字典。"""
     print(f"Loading dataset from {path}...")
     # 我们信任自己生成的文件
-    return torch.load(path, weights_only=False)
+    return torch.load(path)
 
 
 def main():
