@@ -71,17 +71,17 @@ class CartesianTestLoss(nn.Module):
         # 总损失
         total_loss = cartesian_loss + self.trig_constraint_weight * trig_loss
 
-        # 调试信息
-        if self.debug:
-            print(f"Cartesian Loss: {cartesian_loss.item():.6f}")
-            print(f"Trig Loss: {trig_loss.item():.6f}")
-            print(f"Total Loss: {total_loss.item():.6f}")
-            print(
-                f"Pred range: r=[{r_pred.min().item():.3f}, {r_pred.max().item():.3f}]"
-            )
-            print(
-                f"True range: r=[{r_true.min().item():.3f}, {r_true.max().item():.3f}]"
-            )
+        # # 调试信息
+        # if self.debug:
+        #     print(f"Cartesian Loss: {cartesian_loss.item():.6f}")
+        #     print(f"Trig Loss: {trig_loss.item():.6f}")
+        #     print(f"Total Loss: {total_loss.item():.6f}")
+        #     print(
+        #         f"Pred range: r=[{r_pred.min().item():.3f}, {r_pred.max().item():.3f}]"
+        #     )
+        #     print(
+        #         f"True range: r=[{r_true.min().item():.3f}, {r_true.max().item():.3f}]"
+        #     )
 
         return total_loss
 

@@ -54,7 +54,7 @@ def construct_dataset(
             ]
         )
         w, doppler = generate_w_and_doppler(
-            detecting_region_info, doppler_info, coords_a, coords_b, phis1234
+            detecting_region_info, doppler_info, coords_a, coords_b
         )
         features = get_features(phis1234, w, doppler)
         labels = get_labels(detecting_region_info, coords_b)
