@@ -257,7 +257,7 @@ class App(tk.Tk):
             ModelCls = PinUavSeqModel if seq_len > 1 else PinUavModel
             self.model = ModelCls(T, R).to(self.device)
 
-            raw_ckpt = torch.load(fp, map_location=self.device)
+            raw_ckpt = torch.load(fp, map_location=self.device, weights_only=True)
             ckpt = strip_prefix_from_state_dict(raw_ckpt)
             missing, unexpected = self.model.load_state_dict(ckpt, strict=False)
 
@@ -340,7 +340,7 @@ class App(tk.Tk):
             return None, None
 
         phis = np.array([get_angle_phi(region, a, b) for a, b in zip(ca, cb)])
-        w, dop = generate_w_and_doppler(region, dop_info, ca, cb, phis)
+        w, dop = generate_w_and_doppler(region, dop_info, ca, cb)
         feats = get_features(phis, w, dop)
         labels = get_labels(region, cb)
 

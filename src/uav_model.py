@@ -1,159 +1,133 @@
 # ============================================================
-# Physics-Informed UAV Locator  ——  **Robust GN 改进版**
-# ------------------------------------------------------------
-#  1) Huber-IRLS + Tikhonov + 单步 Gauss–Newton  → Δp_lin
-#  2) Residual MLP (SE-ResMLP)                  → Δp_corr
-#  3) 可选 LSTM                                 → 时序滤波
+# Physics-Informed UAV Locator —— Range-&-Doppler GN
+# + State-Space LSTM for Process-Noise Compensation
 # ============================================================
 
 import math
-from typing import Tuple, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 # ---------------- 全局常量 -----------------
-DIM = 2         # 空间维度（2 or 3）
-LAMBDA = 0.06   # 载波波长 (m)
-C0 = 3.0e8      # 光速 (m/s)
-FC = C0 / LAMBDA
+DIM     = 2                # 平面定位
+FC      = 6e9              # 6 GHz 载波
+LAMBDA  = 3.0e8 / FC       # ≈ 0.05 m 波长
+
 
 # ============================================================
-# 1.  物理显式层   ——  Huber-IRLS + Tikhonov + GN
+# 1.  Robust Gauss-Newton (距离 + 多普勒 6×2)
 # ============================================================
 
 def _huber_weight(r: torch.Tensor, delta: float = 0.3) -> torch.Tensor:
-    """
-    Huber 权:
-        w = 1                    , |r| <= δ
-          = δ / (|r| + ε)        , |r| >  δ
-    """
+    """Huber-IRLS 权重"""
     abs_r = r.abs()
-    w = torch.where(abs_r <= delta,
-                    torch.ones_like(r),
-                    delta / (abs_r + 1e-12))
-    return w
+    return torch.where(abs_r <= delta,
+                       torch.ones_like(r),
+                       delta / (abs_r + 1e-12))
 
 
 class LeastSquaresLayer(nn.Module):
     """
-    Robust Least-Squares 物理层
+    单步 Gauss-Newton：由 3 距离 + 3 多普勒 解 2-D 位置增量
     输入:
-        p_prev : (B,Dim)      上一时刻 UAV 坐标 (若无填 0)
-        feats  : (B,6)        [φ1,φ2,φ3,   fd1,fd2,fd3]
-    常量:
-        T      : (Dim,)       发射机坐标
-        R      : (3,Dim)      三只接收机坐标
+        p_prev : (B,2)  当前先验
+        feats  : (B,6)  [φ1,φ2,φ3,  fD1,fD2,fD3]
     输出:
-        Δp_lin : (B,Dim)      粗位移 (一次 GN)
+        Δp_lin : (B,2)  GN 线性化增量
     """
 
-    def __init__(
-        self,
-        T: torch.Tensor,
-        R: torch.Tensor,
-        huber_delta: float = 0.3,
-        alpha: float = 1e-3,
-    ):
+    def __init__(self,
+                 T: torch.Tensor,             # (2,) 发射机坐标
+                 R: torch.Tensor,             # (3,2) 接收机坐标
+                 huber_delta: float = 0.3,
+                 alpha: float = 1e-3):
         super().__init__()
         self.register_buffer("T", T.float())
         self.register_buffer("R", R.float())
         self.delta = huber_delta
         self.alpha = alpha
 
-    # ---------- 内部工具 ---------- #
+    # ---------- 工具 ---------- #
     @staticmethod
-    def _unit(vec: torch.Tensor) -> torch.Tensor:
-        return vec / vec.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    def _unit(v: torch.Tensor) -> torch.Tensor:
+        return v / v.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
+    # ---------- GN 内部 ---------- #
     def _gn_step(self, J: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """
-        单步 Gauss–Newton with Huber-IRLS & Tikhonov
-        J : (B,3,Dim), y : (B,3)
-        return (B,Dim)
-        """
-        # 1) Huber 权
-        w = _huber_weight(-y, self.delta)           # 初始残差取 0 → r = -y
-        WJ = w.unsqueeze(-1) * J                    # (B,3,Dim)
-        Wy = w * y                                  # (B,3)
+        w  = _huber_weight(-y, self.delta)            # (B,6)
+        WJ = w.unsqueeze(-1) * J                      # (B,6,2)
+        Wy = w * y                                    # (B,6)
 
-        # 2) 正则化解  (JᵀJ+αI)⁻¹ Jᵀy
-        JTJ = WJ.transpose(1, 2) @ WJ               # (B,Dim,Dim)
-        JTJ_reg = JTJ + self.alpha * torch.eye(DIM, device=J.device)
-        JTy = WJ.transpose(1, 2) @ Wy.unsqueeze(-1)  # (B,Dim,1)
+        JTJ = WJ.transpose(1, 2) @ WJ                # (B,2,2)
+        JTJ = JTJ + self.alpha * torch.eye(DIM, device=J.device)
+        JTy = WJ.transpose(1, 2) @ Wy.unsqueeze(-1)  # (B,2,1)
 
-        # Cholesky 求解
-        L = torch.linalg.cholesky(JTJ_reg)          # (B,Dim,Dim)
-        sol = torch.cholesky_solve(JTy, L).squeeze(-1)  # (B,Dim)
-        return sol
+        L   = torch.linalg.cholesky(JTJ)
+        Δp  = torch.cholesky_solve(JTy, L).squeeze(-1)  # (B,2)
+        return Δp
 
     # ---------- 前向 ---------- #
-    def forward(self, p_prev: torch.Tensor, feats: torch.Tensor) -> torch.Tensor:
-        """
-        返回 Δp_lin  (B,Dim)
-        """
-        phi = feats[:, :3]     # 相位差 rad
-        fD  = feats[:, 3:]     # 多普勒 Hz
+    def forward(self,
+                p_prev: torch.Tensor,      # (B,2)
+                feats: torch.Tensor) -> torch.Tensor:
+        phi = feats[:, :3]                         # (B,3) 相位差 rad
+        fD  = feats[:, 3:]                         # (B,3) 多普勒 Hz
 
-        # ---------- 构造 J ----------
-        u_AT = self._unit(p_prev - self.T)                  # (B,Dim)
-        u_AR = self._unit(p_prev.unsqueeze(1) - self.R)     # (B,3,Dim)
-        J = u_AT.unsqueeze(1) + u_AR                        # (B,3,Dim)
+        # 距离/速度方向向量
+        u_AT = self._unit(p_prev - self.T)                 # (B,2)
+        u_AR = self._unit(p_prev.unsqueeze(1) - self.R)    # (B,3,2)
 
-        # ---------- 右端 ----------
-        d = LAMBDA * phi / (4.0 * math.pi)                  # (B,3)
-        # 如需速度同法构 b = -λ fD
+        # Jacobian (距离 & 速度)
+        J_r = u_AT.unsqueeze(1) + u_AR                     # (B,3,2)
+        J   = torch.cat([J_r, J_r.clone()], dim=1)         # (B,6,2)
 
-        # ---------- 解 Δp ----------
-        delta_p = self._gn_step(J, d)                       # (B,Dim)
-        return delta_p
+        # 残差
+        d =  LAMBDA * phi / (4 * math.pi)                  # (B,3) m
+        v = -LAMBDA * fD / 2.0                             # (B,3) m/s
+        y = torch.cat([d, v], dim=1)                       # (B,6)
+
+        return self._gn_step(J, y)                         # (B,2)
 
 
 # ============================================================
-# 2.  SE-ResMLP Block
+# 2.  误差补偿 MLP  (SE-ResBlock)
 # ============================================================
 
 class SEResBlock(nn.Module):
-    def __init__(self, in_dim: int, hidden_dim: int,
+    def __init__(self, emb: int, hidden: int,
                  drop: float = 0.1, se_ratio: float = 0.25):
         super().__init__()
-        self.fc1  = nn.Linear(in_dim, hidden_dim, bias=False)
+        self.fc1  = nn.Linear(emb, hidden, bias=False)
         self.act  = nn.GELU()
-        self.norm = nn.LayerNorm(hidden_dim)
+        self.norm = nn.LayerNorm(hidden)
         self.d1   = nn.Dropout(drop)
 
-        se_hid = max(8, int(hidden_dim * se_ratio))
-        self.se_r = nn.Linear(hidden_dim, se_hid, bias=False)
+        se_hid = max(8, int(hidden * se_ratio))
+        self.se_r = nn.Linear(hidden, se_hid, bias=False)
         self.se_a = nn.SiLU()
-        self.se_e = nn.Linear(se_hid, hidden_dim, bias=False)
+        self.se_e = nn.Linear(se_hid, hidden, bias=False)
 
-        self.fc2 = nn.Linear(hidden_dim, in_dim, bias=False)
+        self.fc2 = nn.Linear(hidden, emb, bias=False)
         self.d2  = nn.Dropout(drop)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        res = x
         y = self.d1(self.norm(self.act(self.fc1(x))))
-        # SE
         w = self.se_e(self.se_a(self.se_r(y.mean(0, keepdim=True)))).sigmoid()
         y = y * w
         y = self.d2(self.fc2(y))
-        return res + y
+        return x + y
 
-
-# ============================================================
-# 3.  误差补偿 MLP
-# ============================================================
 
 class ResidualMLP(nn.Module):
-    def __init__(
-        self,
-        dim_in: int,
-        embed: int = 64,
-        depth: int = 4,
-        hid_ratio: float = 2.5,
-        drop: float = 0.1,
-    ):
+    """单帧误差补偿网络 (可在静态数据集使用)"""
+    def __init__(self,
+                 dim_in: int,
+                 embed: int = 64,
+                 depth: int = 4,
+                 hid_ratio: float = 2.5,
+                 drop: float = 0.1):
         super().__init__()
         self.embed = nn.Linear(dim_in, embed, bias=False)
         hidden = int(embed * hid_ratio)
@@ -169,60 +143,59 @@ class ResidualMLP(nn.Module):
 
 
 # ============================================================
-# 4.  单帧 PINN 模型
+# 3.  单帧 PINN (仅供离线测试)
 # ============================================================
 
 class PinUavModel(nn.Module):
     """
-    输入 :
-        feats  (B,6)    三相位差 + 三多普勒
-        p_prev (B,Dim)  上一帧坐标 (无则 None)
-    输出 :
-        p_hat  (B,Dim)  当前位置估计
+    feats : (B,6)   [3 φ, 3 fD]
+    p_prev: (B,2)
+    return: (B,2)
     """
-
     def __init__(self, T: torch.Tensor, R: torch.Tensor):
         super().__init__()
-        self.ls = LeastSquaresLayer(T, R)
+        self.ls     = LeastSquaresLayer(T, R)
         self.refine = ResidualMLP(dim_in=6 + DIM)
 
-    def forward(
-        self,
-        feats: torch.Tensor,
-        p_prev: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self,
+                feats: torch.Tensor,
+                p_prev: Optional[torch.Tensor] = None) -> torch.Tensor:
         if p_prev is None:
             p_prev = torch.zeros(feats.size(0), DIM, device=feats.device)
 
-        Δp_lin = self.ls(p_prev, feats)                  # 物理层
-        inp    = torch.cat([feats, Δp_lin], dim=-1)
-        Δp_corr = self.refine(inp)                       # MLP 校正
-        p_hat   = p_prev + Δp_lin + Δp_corr
-        return p_hat
+        Δp_ls  = self.ls(p_prev, feats)                          # 物理增量
+        Δp_cor = self.refine(torch.cat([feats, Δp_ls], dim=-1))  # 学习增量
+        return p_prev + Δp_ls + Δp_cor
 
 
 # ============================================================
-# 5.  时序版本  (LSTM + PINN)
+# 4.  时序版：State-Space LSTM
 # ============================================================
 
 class PinUavSeqModel(nn.Module):
     """
-    输入 : feats (B,Seq,6)
-    输出 : p_hat (B,Seq,Dim)
+    输入:
+        feats : (B,S,6)  —— 3 相位差 + 3 多普勒
+        p0    : (B,2)    —— 初始先验 (可 None → 0)
+    输出:
+        traj  : (B,S,2)  —— 估计轨迹
+    流程:
+        1. GN 得到 Δp_GN,t   (物理模型)
+        2. LSTM 输出 Δp_proc,t (残余过程噪声)
+        3. p_hat_t = p0 + Σ(Δp_GN + Δp_proc)
     """
 
-    def __init__(
-        self,
-        T: torch.Tensor,
-        R: torch.Tensor,
-        lstm_hidden: int = 128,
-        lstm_layers: int = 2,
-        drop: float = 0.1,
-    ):
+    def __init__(self,
+                 T: torch.Tensor,
+                 R: torch.Tensor,
+                 lstm_hidden: int = 128,
+                 lstm_layers: int = 2,
+                 drop: float = 0.1):
         super().__init__()
-        self.ls_layer = LeastSquaresLayer(T, R)
+        self.gn   = LeastSquaresLayer(T, R)
+
         self.embed = nn.Linear(6 + DIM, 96, bias=False)
-        self.lstm = nn.LSTM(
+        self.lstm  = nn.LSTM(
             input_size=96,
             hidden_size=lstm_hidden,
             num_layers=lstm_layers,
@@ -231,31 +204,35 @@ class PinUavSeqModel(nn.Module):
         )
         self.head = nn.Linear(lstm_hidden, DIM)
 
-    def forward(
-        self,
-        feats: torch.Tensor,
-        p_prev0: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    # ---------- 前向 ---------- #
+    def forward(self,
+                feats: torch.Tensor,               # (B,S,6)
+                p0: Optional[torch.Tensor] = None  # (B,2)
+                ) -> torch.Tensor:
         B, S, _ = feats.shape
-        if p_prev0 is None:
-            p_prev0 = torch.zeros(B, DIM, device=feats.device)
+        if p0 is None:
+            p0 = torch.zeros(B, DIM, device=feats.device)
 
-        # -------- 物理层游程 (Δp_lin) & LSTM 输入 --------
-        p_prev = p_prev0
-        lstm_in = []
-        Δp_ls_all = []
+        # ---- 1) GN 物理增量序列 ----
+        p_prev = p0
+        dp_gn_seq, lstm_in = [], []
         for t in range(S):
-            Δp_ls_t = self.ls_layer(p_prev, feats[:, t])
-            Δp_ls_all.append(Δp_ls_t)
-            lstm_in.append(torch.cat([feats[:, t], Δp_ls_t], dim=-1))
-            p_prev = p_prev + Δp_ls_t
-        lstm_in = torch.stack(lstm_in, dim=1)      # (B,S,6+Dim)
-        Δp_ls_all = torch.stack(Δp_ls_all, dim=1)  # (B,S,Dim)
+            dp = self.gn(p_prev, feats[:, t])                   # (B,2)
+            dp_gn_seq.append(dp)
+            lstm_in.append(torch.cat([feats[:, t], dp], dim=-1))
+            p_prev = p_prev + dp                                # 物理游程
 
-        # -------- LSTM 校正 --------
-        x = F.gelu(self.embed(lstm_in))
-        x, _ = self.lstm(x)
-        Δp_corr = self.head(x)                     # (B,S,Dim)
+        Δp_GN   = torch.stack(dp_gn_seq, dim=1)                 # (B,S,2)
+        lstm_in = torch.stack(lstm_in,  dim=1)                  # (B,S,8)
 
-        p_hat = p_prev0.unsqueeze(1) + Δp_ls_all.cumsum(dim=1) + Δp_corr
-        return p_hat
+        # ---- 2) LSTM 过程噪声增量 ----
+        x, _ = self.lstm(F.gelu(self.embed(lstm_in)))
+        Δp_proc = self.head(x)                                  # (B,S,2)
+
+        # ---- 3) 积分得到轨迹 ----
+        traj = (
+            p0.unsqueeze(1)
+            + torch.cumsum(Δp_GN,   dim=1)
+            + torch.cumsum(Δp_proc, dim=1)
+        )                                                       # (B,S,2)
+        return traj
