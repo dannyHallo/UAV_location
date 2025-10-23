@@ -1,5 +1,5 @@
 import numpy as np
-import math
+from scipy import signal
 import src.detecting_region_info as detecting_region_info
 import src.doppler_info as doppler_info
 
@@ -17,9 +17,9 @@ def _calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
       如果输入是一维 (d,), 返回标量速度；
       如果输入是二维 (n,d), 返回形状 (n,) 的速度数组。
     """
-    # 转成 numpy 数组
-    coord_a = np.asarray(coord_a, dtype=float)
-    coord_b = np.asarray(coord_b, dtype=float)
+    # 转成 numpy 数组 - 使用双精度避免数值误差
+    coord_a = np.asarray(coord_a, dtype=np.float64)
+    coord_b = np.asarray(coord_b, dtype=np.float64)
 
     # 形状检查
     if coord_a.shape != coord_b.shape:
@@ -45,9 +45,7 @@ def _calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
     raise ValueError(f"不支持 ndim={coord_a.ndim} 的输入")
 
 
-def calculate_distance(x, y, a, b):
-    """Calculate the Euclidean distance between two points (x, y) and (a, b)."""
-    return math.sqrt((a - x) ** 2 + (b - y) ** 2)
+# calculate_distance函数已删除，使用numpy.linalg.norm替代
 
 
 # 定义计算夹角的函数，直接返回cosθ值，避免度数转换的数值误差
@@ -113,13 +111,24 @@ def _calculate_path_difference_and_phase_shift(
     R2 = detecting_region_info.receiver_position_2
     R3 = detecting_region_info.receiver_position_3
 
-    # 计算路径差 Δd_ab = |TA|+|AR1| − (|TB|+|BR1|)
+    # 计算路径差 Δd_ab = (AR-BR) - (TB-TA) - 差分重排减少数值误差
     def calc_path_diff(T, R, A, B):
+        # 使用双精度计算
+        A = np.asarray(A, dtype=np.float64)
+        B = np.asarray(B, dtype=np.float64)
+        T = np.asarray(T, dtype=np.float64)
+        R = np.asarray(R, dtype=np.float64)
+
         TA = calc_distance(T, A)
         AR = calc_distance(A, R)
         TB = calc_distance(T, B)
         BR = calc_distance(B, R)
-        return (TA + AR) - (TB + BR)
+
+        # 差分重排：先计算中等量级数的差，再相减
+        # 原来：(TA + AR) - (TB + BR) = (TA - TB) + (AR - BR)
+        # 改进：(AR - BR) - (TB - TA) = (AR - BR) + (TA - TB)
+        delta_d = (AR - BR) - (TB - TA)
+        return delta_d
 
     # 计算四个接收器的路径差
     delta_d1 = calc_path_diff(T, R1, coord_a, coord_b)
@@ -134,74 +143,114 @@ def _calculate_path_difference_and_phase_shift(
     return [delta_phi1, delta_phi2, delta_phi3]
 
 
-# 改进的角度计算方法，使用向量点积直接计算cosθ
-def _get_cos_angles(detecting_region_info, coord_a, coord_b):
+# 旧的角度计算函数已删除
+
+
+def apply_signal_filtering(w_raw, filter_type="moving_average", window_size=5):
     """
-    计算角度变化，返回cos值而不是度数，避免数值误差
+    对原始相位差信号进行滤波处理，减少振荡
+
+    参数：
+        w_raw: 原始相位差数据，形状 (N, 3)
+        filter_type: 滤波类型 ('moving_average', 'lowpass', 'none')
+        window_size: 滑动平均窗口大小
+
+    返回：
+        滤波后的相位差数据
+    """
+    if filter_type == "none":
+        return w_raw
+
+    w_filtered = np.zeros_like(w_raw, dtype=np.float64)
+
+    if filter_type == "moving_average":
+        # 滑动平均滤波
+        kernel = np.ones(window_size) / window_size
+        for k in range(w_raw.shape[1]):  # 对每个接收器通道
+            w_filtered[:, k] = np.convolve(w_raw[:, k], kernel, mode="same")
+
+    elif filter_type == "lowpass":
+        # 低通滤波 (Butterworth)
+        nyquist = 0.5  # 假设采样频率为1Hz
+        cutoff = 0.1  # 截止频率
+        b, a = signal.butter(4, cutoff / nyquist, btype="low")
+
+        for k in range(w_raw.shape[1]):
+            w_filtered[:, k] = signal.filtfilt(b, a, w_raw[:, k])
+
+    return w_filtered
+
+
+# EKF功能已移除以减少计算量
+
+
+def generate_w_and_doppler_central_diff(
+    detecting_region_info: detecting_region_info,
+    doppler_info: doppler_info,
+    trajectory_coords,
+    apply_filtering=True,
+    filter_type="moving_average",
+    filter_window_size=5,
+):
+    """
+    使用中心差分计算w和doppler：
+    A = pos(t-Δt/2), B = pos(t+Δt/2)
 
     参数：
         detecting_region_info: 检测区域信息
-        coord_a: 上一时刻位置
-        coord_b: 下一时刻位置
+        doppler_info: Doppler信息（包含c, fc, time_interval）
+        trajectory_coords: 完整轨迹坐标数组，形状 (N, 2)
+        apply_filtering: 是否应用信号滤波
+        filter_type: 滤波类型 ('moving_average', 'lowpass', 'none')
+        filter_window_size: 滑动平均窗口大小
 
     返回：
-        四个接收器对应的cos角度变化值 [cos_θ1, cos_θ2, cos_θ3, cos_θ4]
+        [w, doppler]: w单位为弧度，doppler单位为Hz，形状均为 (N-1,3)
     """
-    # 在以 T 为原点、T→RX1 为 X 轴的局部坐标系下计算
-    a_local = detecting_region_info.transform_point_to_tx_rx1(coord_a)
-    b_local = detecting_region_info.transform_point_to_tx_rx1(coord_b)
-    v1_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v1)
-    v2_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v2)
-    v3_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v3)
-    v4_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v4)
 
-    # 计算各接收器到A点和B点的cos角度
-    cos_theta_1a = _calculate_cos_angle_with_x_axis(
-        v1_local[0], v1_local[1], a_local[0], a_local[1]
-    )
-    cos_theta_1b = _calculate_cos_angle_with_x_axis(
-        v1_local[0], v1_local[1], b_local[0], b_local[1]
-    )
-    cos_theta_2a = _calculate_cos_angle_with_x_axis(
-        v2_local[0], v2_local[1], a_local[0], a_local[1]
-    )
-    cos_theta_2b = _calculate_cos_angle_with_x_axis(
-        v2_local[0], v2_local[1], b_local[0], b_local[1]
-    )
-    cos_theta_3a = _calculate_cos_angle_with_x_axis(
-        v3_local[0], v3_local[1], a_local[0], a_local[1]
-    )
-    cos_theta_3b = _calculate_cos_angle_with_x_axis(
-        v3_local[0], v3_local[1], b_local[0], b_local[1]
-    )
-    cos_theta_4a = _calculate_cos_angle_with_x_axis(
-        v4_local[0], v4_local[1], a_local[0], a_local[1]
-    )
-    cos_theta_4b = _calculate_cos_angle_with_x_axis(
-        v4_local[0], v4_local[1], b_local[0], b_local[1]
-    )
+    data_length = len(trajectory_coords)
+    if data_length < 2:
+        raise ValueError("轨迹数据至少需要2个点才能计算中心差分")
 
-    # 计算角度变化的cos值（使用余弦差公式）
-    # cos(θ_b - θ_a) = cos(θ_a)cos(θ_b) + sin(θ_a)sin(θ_b)
-    # 但我们需要的是角度差的绝对值，所以使用 |cos(θ_b - θ_a)|
-    cos_delta_theta1 = abs(
-        cos_theta_1a * cos_theta_1b
-        + np.sqrt(1 - cos_theta_1a**2) * np.sqrt(1 - cos_theta_1b**2)
-    )
-    cos_delta_theta2 = abs(
-        cos_theta_2a * cos_theta_2b
-        + np.sqrt(1 - cos_theta_2a**2) * np.sqrt(1 - cos_theta_2b**2)
-    )
-    cos_delta_theta3 = abs(
-        cos_theta_3a * cos_theta_3b
-        + np.sqrt(1 - cos_theta_3a**2) * np.sqrt(1 - cos_theta_3b**2)
-    )
-    cos_delta_theta4 = abs(
-        cos_theta_4a * cos_theta_4b
-        + np.sqrt(1 - cos_theta_4a**2) * np.sqrt(1 - cos_theta_4b**2)
-    )
+    # 中心差分：需要N-1个输出点
+    output_length = data_length - 1
+    w = np.zeros([output_length, 3], dtype=np.float64)
+    doppler = np.zeros([output_length, 3], dtype=np.float64)
 
-    return [cos_delta_theta1, cos_delta_theta2, cos_delta_theta3, cos_delta_theta4]
+    # 计算波长 λ = c / fc
+    wavelength = doppler_info.c / doppler_info.fc
+
+    # 遍历轨迹点，计算中心差分
+    for i in range(output_length):
+        # 中心差分：A = pos(t-Δt/2), B = pos(t+Δt/2)
+        # 对于轨迹点i，A是前一个点，B是后一个点
+        coord_a = trajectory_coords[i]  # pos(t-Δt/2)
+        coord_b = trajectory_coords[i + 1]  # pos(t+Δt/2)
+
+        # 使用基于路径差的相位差计算方法
+        [delta_phi1, delta_phi2, delta_phi3] = (
+            _calculate_path_difference_and_phase_shift(
+                detecting_region_info, coord_a, coord_b, wavelength
+            )
+        )
+
+        # w = Δφ，各通道分别对应 R1、R2、R3
+        w[i][0] = delta_phi1
+        w[i][1] = delta_phi2
+        w[i][2] = delta_phi3
+
+        # doppler = f_D = 1/(2π) · Δφ/Δt (Hz)
+        # 注意：中心差分的时间间隔是Δt，不是Δt/2
+        doppler[i][0] = delta_phi1 / (2 * np.pi * doppler_info.time_interval)
+        doppler[i][1] = delta_phi2 / (2 * np.pi * doppler_info.time_interval)
+        doppler[i][2] = delta_phi3 / (2 * np.pi * doppler_info.time_interval)
+
+    # 应用信号滤波减少振荡
+    if apply_filtering:
+        w = apply_signal_filtering(w, filter_type, filter_window_size)
+        doppler = apply_signal_filtering(doppler, filter_type, filter_window_size)
+
+    return [w, doppler]
 
 
 def extract_coords_from_lines(lines):
@@ -224,6 +273,9 @@ def generate_w_and_doppler(
     doppler_info: doppler_info,
     coords_a,
     coords_b,
+    apply_filtering=True,
+    filter_type="moving_average",
+    filter_window_size=5,
 ):
     """
     使用基于路径差的相位定义：
@@ -235,14 +287,17 @@ def generate_w_and_doppler(
         doppler_info: Doppler信息（包含c, fc, time_interval）
         coords_a: 上一时刻位置数组
         coords_b: 下一时刻位置数组
+        apply_filtering: 是否应用信号滤波
+        filter_type: 滤波类型 ('moving_average', 'lowpass', 'none')
+        filter_window_size: 滑动平均窗口大小
 
     返回：
         [w, doppler]: w单位为弧度，doppler单位为Hz，形状均为 (N,3)
     """
 
     data_length = np.shape(coords_a)[0]
-    w = np.zeros([data_length, 3])
-    doppler = np.zeros([data_length, 3])
+    w = np.zeros([data_length, 3], dtype=np.float64)
+    doppler = np.zeros([data_length, 3], dtype=np.float64)
 
     # 计算波长 λ = c / fc
     wavelength = doppler_info.c / doppler_info.fc
@@ -269,237 +324,12 @@ def generate_w_and_doppler(
         doppler[i][1] = delta_phi2 / (2 * np.pi * doppler_info.time_interval)
         doppler[i][2] = delta_phi3 / (2 * np.pi * doppler_info.time_interval)
 
-    return [w, doppler]
-
-
-# 保留原有的实现用于比较测试
-def generate_w_and_doppler_original(
-    detecting_region_info: detecting_region_info,
-    doppler_info: doppler_info,
-    coords_a,
-    coords_b,
-    phis_1234,
-):
-    """
-    原有的w和doppler计算方法（保留用于比较）
-    """
-    data_length = np.shape(coords_a)[0]
-    w = np.zeros([data_length, 3])
-    doppler = np.zeros([data_length, 3])
-
-    # 遍历每一个coords_a
-    for i in range(data_length):
-        coord_a = coords_a[i]
-        coord_b = coords_b[i]
-
-        [phi1, phi2, phi3, phi4] = phis_1234[i]
-        [theta1, theta2, theta3, theta4] = _get_angle_theta_original(
-            detecting_region_info, coord_a, coord_b
-        )
-
-        # 预先计算速度大小
-        speeds = _calculate_instantaneous_speeds(
-            coord_a, coord_b, doppler_info.time_interval
-        )
-
-        x = coord_a[0]
-        y = coord_a[1]
-        x1 = coord_b[0]
-        y1 = coord_b[1]
-
-        d11 = calculate_distance(
-            x, y, detecting_region_info.v1[0], detecting_region_info.v1[1]
-        )
-        d12 = calculate_distance(
-            x1, y1, detecting_region_info.v1[0], detecting_region_info.v1[1]
-        )
-        d21 = calculate_distance(
-            x, y, detecting_region_info.v2[0], detecting_region_info.v2[1]
-        )
-        d22 = calculate_distance(
-            x1, y1, detecting_region_info.v2[0], detecting_region_info.v2[1]
-        )
-        d31 = calculate_distance(
-            x, y, detecting_region_info.v3[0], detecting_region_info.v3[1]
-        )
-        d32 = calculate_distance(
-            x1, y1, detecting_region_info.v3[0], detecting_region_info.v3[1]
-        )
-        d41 = calculate_distance(
-            x, y, detecting_region_info.v3[0], detecting_region_info.v3[1]
-        )
-        d42 = calculate_distance(
-            x1, y1, detecting_region_info.v3[0], detecting_region_info.v3[1]
-        )
-
-        w12 = (
-            d11
-            * theta1
-            * (np.cos(phi1) + np.cos(phi2))
-            * doppler_info.fc
-            / doppler_info.c
-            * (theta1 * np.cos(phi1) + np.sin(phi1))
-        )
-        w13 = (
-            d31
-            * theta3
-            * (np.cos(phi1) + np.cos(phi3))
-            * doppler_info.fc
-            / doppler_info.c
-            * (theta3 * np.cos(phi3) + np.sin(phi3))
-        )
-        w14 = (
-            d41
-            * theta4
-            * (np.cos(phi1) + np.cos(phi3))
-            * doppler_info.fc
-            / doppler_info.c
-            * (theta4 * np.cos(phi4) + np.sin(phi4))
-        )
-
-        # 使用第i个速度值
-        v12 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi2)) / doppler_info.c
-        v13 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi3)) / doppler_info.c
-        v14 = speeds * doppler_info.fc * (np.cos(phi1) + np.cos(phi4)) / doppler_info.c
-
-        w[i][0] = w12
-        w[i][1] = w13
-        w[i][2] = w14
-
-        doppler[i][0] = v12
-        doppler[i][1] = v13
-        doppler[i][2] = v14
+    # 应用信号滤波减少振荡
+    if apply_filtering:
+        w = apply_signal_filtering(w, filter_type, filter_window_size)
+        doppler = apply_signal_filtering(doppler, filter_type, filter_window_size)
 
     return [w, doppler]
 
 
-# 保留原有的角度计算函数用于比较
-def _get_angle_theta_original(detecting_region_info, coord_a, coord_b):
-    """原有的角度计算方法"""
-    # 在以 T 为原点、T→RX1 为 X 轴的局部坐标系下计算
-    a_local = detecting_region_info.transform_point_to_tx_rx1(coord_a)
-    b_local = detecting_region_info.transform_point_to_tx_rx1(coord_b)
-    v1_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v1)
-    v2_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v2)
-    v3_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v3)
-    v4_local = detecting_region_info.transform_point_to_tx_rx1(detecting_region_info.v4)
-
-    n_theta_1a = _calculate_angle_with_x_axis_original(
-        v1_local[0], v1_local[1], a_local[0], a_local[1]
-    )
-    n_theta_1b = _calculate_angle_with_x_axis_original(
-        v1_local[0], v1_local[1], b_local[0], b_local[1]
-    )
-    n_theta_2a = _calculate_angle_with_x_axis_original(
-        v2_local[0], v2_local[1], a_local[0], a_local[1]
-    )
-    n_theta_2b = _calculate_angle_with_x_axis_original(
-        v2_local[0], v2_local[1], b_local[0], b_local[1]
-    )
-    n_theta_3a = _calculate_angle_with_x_axis_original(
-        v3_local[0], v3_local[1], a_local[0], a_local[1]
-    )
-    n_theta_3b = _calculate_angle_with_x_axis_original(
-        v3_local[0], v3_local[1], b_local[0], b_local[1]
-    )
-    n_theta_4a = _calculate_angle_with_x_axis_original(
-        v4_local[0], v4_local[1], a_local[0], a_local[1]
-    )
-    n_theta_4b = _calculate_angle_with_x_axis_original(
-        v4_local[0], v4_local[1], b_local[0], b_local[1]
-    )
-
-    theta1 = abs(n_theta_1a - n_theta_1b)
-    theta2 = abs(n_theta_2a - n_theta_2b)
-    theta3 = abs(n_theta_3a - n_theta_3b)
-    theta4 = abs(n_theta_4a - n_theta_4b)
-
-    return [
-        np.radians(theta1),
-        np.radians(theta2),
-        np.radians(theta3),
-        np.radians(theta4),
-    ]
-
-
-def _calculate_angle_with_x_axis_original(x, y, a, b):
-    """原有的角度计算函数"""
-    # 向量p1p2
-    vector = np.array([a - x, b - y])
-    # x轴正方向的向量
-    x_axis = np.array([1, 0])
-
-    # 向量的点乘
-    dot_product = np.dot(vector, x_axis)
-    # 向量的模长
-    norm_vector = np.linalg.norm(vector)
-
-    # 防止除以零
-    if norm_vector == 0:
-        return 0
-
-    # 计算夹角的余弦值
-    cos_angle = dot_product / norm_vector
-    # 余弦值的范围是[-1, 1]，可能由于浮点数误差超出这个范围
-    # 这里将其限制在[-1, 1]内
-    cos_angle = np.clip(cos_angle, -1, 1)
-
-    # 计算夹角（弧度转换为度）
-    angle = np.arccos(cos_angle)
-    angle_degrees = np.degrees(angle)
-
-    # 考虑向量在y轴上的方向，如果向量第二个分量是负的，则它在x轴的下方，夹角应该是360°-计算出的角度
-    if vector[1] < 0:
-        angle_degrees = 360 - angle_degrees
-
-    return angle_degrees
-
-
-def compare_implementations(
-    detecting_region_info, doppler_info, coords_a, coords_b, phis_1234
-):
-    """
-    比较新旧实现的数值差异
-
-    参数：
-        detecting_region_info: 检测区域信息
-        doppler_info: Doppler信息
-        coords_a: 上一时刻位置数组
-        coords_b: 下一时刻位置数组
-        phis_1234: 相位信息
-
-    返回：
-        比较结果字典
-    """
-    # 使用新实现
-    w_new, doppler_new = generate_w_and_doppler(
-        detecting_region_info, doppler_info, coords_a, coords_b, phis_1234
-    )
-
-    # 使用原实现
-    w_old, doppler_old = generate_w_and_doppler_original(
-        detecting_region_info, doppler_info, coords_a, coords_b, phis_1234
-    )
-
-    # 计算差异
-    w_diff = np.abs(w_new - w_old)
-    doppler_diff = np.abs(doppler_new - doppler_old)
-
-    # 计算相对误差
-    w_rel_error = np.divide(w_diff, np.abs(w_old) + 1e-10)
-    doppler_rel_error = np.divide(doppler_diff, np.abs(doppler_old) + 1e-10)
-
-    return {
-        "w_new": w_new,
-        "w_old": w_old,
-        "w_absolute_diff": w_diff,
-        "w_relative_error": w_rel_error,
-        "doppler_new": doppler_new,
-        "doppler_old": doppler_old,
-        "doppler_absolute_diff": doppler_diff,
-        "doppler_relative_error": doppler_rel_error,
-        "max_w_abs_diff": np.max(w_diff),
-        "max_w_rel_error": np.max(w_rel_error),
-        "max_doppler_abs_diff": np.max(doppler_diff),
-        "max_doppler_rel_error": np.max(doppler_rel_error),
-    }
+# 旧的实现已删除，只保留新的改进版本

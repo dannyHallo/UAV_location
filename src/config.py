@@ -7,7 +7,7 @@ time_interval = 0.01
 
 num_detecting_regions = 1
 visualize_num_detecting_regions = 1
-num_lines_to_generate_per_region = 300
+num_lines_to_generate_per_region = 30000
 
 sequence_length = 5
 
