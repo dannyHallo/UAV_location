@@ -7,7 +7,7 @@ time_interval = 0.01
 
 num_detecting_regions = 1
 visualize_num_detecting_regions = 1
-num_lines_to_generate_per_region = 20000
+num_lines_to_generate_per_region = 1000
 
 sequence_length = 5
 
@@ -29,3 +29,8 @@ optimizer = "Adam"  # ["LBFGS" | "Adam"]
 fc = 6e9
 c = 3e8
 v = 30
+
+# NOISE PARAMETERS
+SNR_dB = 10  # Signal-to-Noise Ratio in dB
+T_CPI = time_interval  # Coherent Processing Interval (same as time_interval)
+add_noise = True  # Enable/disable noise addition

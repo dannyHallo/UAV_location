@@ -146,15 +146,64 @@ def extract_coords_from_lines(lines):
     return np.array(coords)
 
 
+def add_gaussian_noise_to_measurements(w, doppler, snr_db, t_cpi):
+    """
+    为相位差(w)和多普勒频移(doppler)添加高斯白噪声
+
+    参数:
+        w: 相位差数组, shape (N, 3)
+        doppler: 多普勒频移数组, shape (N, 3)
+        snr_db: 信噪比(dB)
+        t_cpi: 相干处理时间间隔
+
+    返回:
+        带噪声的 w 和 doppler
+
+    公式:
+        σ_Δφ = sqrt(1/SNR)
+        σ_f = sqrt(1/(SNR * T_CPI^2))
+    其中 SNR 是线性值(非dB)
+    """
+    # 将SNR从dB转换为线性值
+    snr_linear = 10 ** (snr_db / 10)
+
+    # 计算标准差
+    sigma_phase = np.sqrt(1 / snr_linear)
+    sigma_doppler = np.sqrt(1 / (snr_linear * t_cpi**2))
+
+    # 为相位差添加独立的高斯白噪声 (w12, w13, w14 互相独立)
+    w_noise = np.random.randn(*w.shape) * sigma_phase
+    w_noisy = w + w_noise
+
+    # 为多普勒添加独立的高斯白噪声 (V12, V13, V14 互相独立)
+    doppler_noise = np.random.randn(*doppler.shape) * sigma_doppler
+    doppler_noisy = doppler + doppler_noise
+
+    return w_noisy, doppler_noisy
+
+
 def generate_w_and_doppler(
     detecting_region_info: detecting_region_info,
     doppler_info: doppler_info,
     coords_a,
     coords_b,
     phis_1234,
+    add_noise=False,
+    snr_db=None,
+    t_cpi=None,
 ):
     """
     lines 输入格式: 见 NewLinesGenerator.py
+
+    参数:
+        detecting_region_info: 检测区域信息
+        doppler_info: 多普勒信息
+        coords_a: 起始坐标
+        coords_b: 结束坐标
+        phis_1234: 相位角度
+        add_noise: 是否添加噪声
+        snr_db: 信噪比(dB), 仅在 add_noise=True 时需要
+        t_cpi: 相干处理时间间隔, 仅在 add_noise=True 时需要
     """
 
     data_length = np.shape(coords_a)[0]
@@ -245,5 +294,11 @@ def generate_w_and_doppler(
         doppler[i][0] = v12
         doppler[i][1] = v13
         doppler[i][2] = v14
+
+    # 添加噪声(如果启用)
+    if add_noise:
+        if snr_db is None or t_cpi is None:
+            raise ValueError("add_noise=True 时必须提供 snr_db 和 t_cpi 参数")
+        w, doppler = add_gaussian_noise_to_measurements(w, doppler, snr_db, t_cpi)
 
     return [w, doppler]
