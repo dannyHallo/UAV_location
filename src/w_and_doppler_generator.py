@@ -2,6 +2,7 @@ import numpy as np
 import math
 import src.detecting_region_info as detecting_region_info
 import src.doppler_info as doppler_info
+import src.config as config
 
 
 def _calculate_instantaneous_speeds(coord_a, coord_b, time_interval):
@@ -131,6 +132,41 @@ def _get_angle_theta(detecting_region_info, coord_a, coord_b):
     ]
 
 
+def _add_gaussian_noise(w, doppler, SNR_dB, time_interval):
+    """
+    为 w 和 doppler 添加高斯噪声
+
+    参数：
+        w: w 数据，形状为 (n, 3)
+        doppler: doppler 数据，形状为 (n, 3)
+        SNR_dB: 信噪比（dB）
+        time_interval: CPI 时间间隔 T_CPI
+
+    返回：
+        添加噪声后的 [w, doppler]
+    """
+    # 将 SNR 从 dB 转换为线性值
+    # SNR_dB = 10 * log10(SNR_linear)
+    # SNR_linear = 10^(SNR_dB / 10)
+    SNR_linear = 10 ** (SNR_dB / 10)
+
+    # 计算 w 的标准差: σ_w = 1 / sqrt(2 * SNR_linear)
+    sigma_w = 1.0 / np.sqrt(2 * SNR_linear)
+
+    # 计算 doppler 的标准差: σ_fd = 1 / (T_CPI * sqrt(2 * SNR_linear))
+    sigma_fd = 1.0 / (time_interval * np.sqrt(2 * SNR_linear))
+
+    # 为 w 添加高斯噪声
+    w_noise = np.random.normal(0, sigma_w, w.shape)
+    w_noisy = w + w_noise
+
+    # 为 doppler 添加高斯噪声
+    doppler_noise = np.random.normal(0, sigma_fd, doppler.shape)
+    doppler_noisy = doppler + doppler_noise
+
+    return [w_noisy, doppler_noisy]
+
+
 def extract_coords_from_lines(lines):
     """
     Extract all coordinates from m different lines. Each line l1, l2, ..., consists of n1, n2, n3 different coordinates.
@@ -213,24 +249,24 @@ def generate_w_and_doppler(
             * theta1
             * (np.cos(phi1) + np.cos(phi2))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta1 * np.cos(phi1) + np.sin(phi1))
+            / (doppler_info.c
+            * (theta1 * np.cos(phi1) + np.sin(phi1)))
         )
         w13 = (
             d31
             * theta3
             * (np.cos(phi1) + np.cos(phi3))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta3 * np.cos(phi3) + np.sin(phi3))
+            / (doppler_info.c
+            * (theta3 * np.cos(phi3) + np.sin(phi3)))
         )
         w14 = (
             d41
             * theta4
             * (np.cos(phi1) + np.cos(phi3))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta4 * np.cos(phi4) + np.sin(phi4))
+            / (doppler_info.c
+            * (theta4 * np.cos(phi4) + np.sin(phi4)))
         )
 
         # 使用第i个速度值
@@ -246,4 +282,9 @@ def generate_w_and_doppler(
         doppler[i][1] = v13
         doppler[i][2] = v14
 
-    return [w, doppler]
+    # 添加高斯噪声
+    [w_noisy, doppler_noisy] = _add_gaussian_noise(
+        w, doppler, config.SNR_dB, doppler_info.time_interval
+    )
+
+    return [w_noisy, doppler_noisy]

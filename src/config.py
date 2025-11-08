@@ -7,7 +7,7 @@ time_interval = 0.01
 
 num_detecting_regions = 1
 visualize_num_detecting_regions = 1
-num_lines_to_generate_per_region = 20000
+num_lines_to_generate_per_region = 2000
 
 sequence_length = 5
 
@@ -29,3 +29,6 @@ optimizer = "Adam"  # ["LBFGS" | "Adam"]
 fc = 6e9
 c = 3e8
 v = 30
+
+# NOISE PARAMETER
+SNR_dB = 20  # Signal-to-Noise Ratio in dB
