@@ -213,24 +213,24 @@ def generate_w_and_doppler(
             * theta1
             * (np.cos(phi1) + np.cos(phi2))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta1 * np.cos(phi1) + np.sin(phi1))
+            / (doppler_info.c
+            * (theta1 * np.cos(phi1) + np.sin(phi1)))
         )
         w13 = (
             d31
             * theta3
             * (np.cos(phi1) + np.cos(phi3))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta3 * np.cos(phi3) + np.sin(phi3))
+            / (doppler_info.c
+            * (theta3 * np.cos(phi3) + np.sin(phi3)))
         )
         w14 = (
             d41
             * theta4
             * (np.cos(phi1) + np.cos(phi3))
             * doppler_info.fc
-            / doppler_info.c
-            * (theta4 * np.cos(phi4) + np.sin(phi4))
+            / (doppler_info.c
+            * (theta4 * np.cos(phi4) + np.sin(phi4)))
         )
 
         # 使用第i个速度值
