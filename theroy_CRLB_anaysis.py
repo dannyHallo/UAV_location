@@ -28,10 +28,7 @@ class SystemConfig:
         self.SNR_linear = 10 ** (self.SNR_dB / 10)
         
         # 计算测量误差标准差
-        self.sigma_d_phi = self.lambda_wave / (2 * np.pi * np.sqrt(2 * self.SNR_linear))
-        self.sigma_d_v = self.lambda_wave / np.sqrt(2 * self.SNR_linear)
-        self.sigma_d = np.sqrt(self.sigma_d_phi**2 + self.sigma_d_v**2)
-        
+ 
         print("=" * 90)
         print("系统配置参数")
         print("=" * 90)

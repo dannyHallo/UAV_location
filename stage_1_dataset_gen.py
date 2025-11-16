@@ -139,9 +139,23 @@ def generate_and_save_dataset(
     doppler_info = doppler_info_module.DopplerInfo(
         config.c, config.fc, config.time_interval
     )
-    detecting_region_infos = generate_detecting_region_infos(
-        num_configurations=num_regions, seed=region_seed
+
+    # 使用指定的发射机和接收机位置
+    from src.detecting_region_info import DetectingRegionInfo
+
+    T = np.array([0, 0])  # Transmitter
+    R1 = np.array([200, 0])  # Receiver 1
+    R2 = np.array([80, 120])  # Receiver 2
+    R3 = np.array([300, 150])  # Receiver 3
+
+    # 创建固定位置的检测区域信息
+    fixed_region_info = DetectingRegionInfo(
+        transmittor_position=T,
+        receiver_position_1=R1,
+        receiver_position_2=R2,
+        receiver_position_3=R3,
     )
+    detecting_region_infos = [fixed_region_info] * num_regions
     region_seeds = spawn_child_seeds(line_seed, num_regions)
 
     full_features, full_labels, full_extra_infos, full_lengths = [], [], [], []

@@ -7,7 +7,7 @@ class BistaticDifferentialCRLB:
         # Station positions (unit: m)
         self.T = np.array([0, 0])  # Transmitter
         self.R1 = np.array([200, 0])  # Receiver 1
-        self.R2 = np.array([100, 100])  # Receiver 2
+        self.R2 = np.array([80, 120])  # Receiver 2
         self.R3 = np.array([300, 150])  # Receiver 3
         self.receivers = [self.R1, self.R2, self.R3]
         
@@ -414,7 +414,7 @@ class BistaticDifferentialCRLB:
 
 # ===== 测试代码 =====
 
-crlb = BistaticDifferentialCRLB(SNR_dB=30)
+crlb = BistaticDifferentialCRLB(SNR_dB=25)
 
 # 计算网格平均CRLB（在80%缩小的四边形内）
 avg_PEB_A, avg_PEB_B, avg_VEB, valid_points = crlb.test_grid_average(
