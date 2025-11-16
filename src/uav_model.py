@@ -1,10 +1,11 @@
-# ============================================================
-# Physics-Informed UAV Locator  ——  **Robust GN 改进版**
-# ------------------------------------------------------------
-#  1) Huber-IRLS + Tikhonov + 单步 Gauss–Newton  → Δp_lin
-#  2) Residual MLP (SE-ResMLP)                  → Δp_corr
-#  3) 可选 LSTM                                 → 时序滤波
-# ============================================================
+"""
+Physics-Informed UAV Locator - 渐进式改进版
+基于旧模型，温和改进：
+1. 保留单步 GN（稳定）
+2. 可选自适应 Huber delta
+3. 增强 MLP 输入（几何特征）
+4. 改进输出约束
+"""
 
 import math
 from typing import Tuple, Optional
@@ -14,104 +15,145 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # ---------------- 全局常量 -----------------
-DIM = 2         # 空间维度（2 or 3）
-LAMBDA = 0.06   # 载波波长 (m)
-C0 = 3.0e8      # 光速 (m/s)
+DIM = 2
+LAMBDA = 0.06
+C0 = 3.0e8
 FC = C0 / LAMBDA
 
+
 # ============================================================
-# 1.  物理显式层   ——  Huber-IRLS + Tikhonov + GN
+# 1. 改进的物理层（保留单步GN + 自适应Huber）
 # ============================================================
 
-def _huber_weight(r: torch.Tensor, delta: float = 0.3) -> torch.Tensor:
+def _adaptive_huber_weight(r: torch.Tensor, k: float = 1.5) -> torch.Tensor:
     """
-    Huber 权:
-        w = 1                    , |r| <= δ
-          = δ / (|r| + ε)        , |r| >  δ
+    自适应 Huber 权重：
+    delta = k * median(|r|)
     """
+    delta = k * r.abs().median(dim=-1, keepdim=True)[0].clamp(min=0.1)
     abs_r = r.abs()
-    w = torch.where(abs_r <= delta,
-                    torch.ones_like(r),
-                    delta / (abs_r + 1e-12))
+    w = torch.where(
+        abs_r <= delta,
+        torch.ones_like(r),
+        delta / (abs_r + 1e-12)
+    )
     return w
 
 
-class LeastSquaresLayer(nn.Module):
+class ImprovedLeastSquaresLayer(nn.Module):
     """
-    Robust Least-Squares 物理层
-    输入:
-        p_prev : (B,Dim)      上一时刻 UAV 坐标 (若无填 0)
-        feats  : (B,6)        [φ1,φ2,φ3,   fd1,fd2,fd3]
-    常量:
-        T      : (Dim,)       发射机坐标
-        R      : (3,Dim)      三只接收机坐标
-    输出:
-        Δp_lin : (B,Dim)      粗位移 (一次 GN)
+    改进的物理层：
+    - 保留单步 GN（稳定性）
+    - 自适应 Huber 权重
+    - 增加步长约束
     """
 
     def __init__(
         self,
         T: torch.Tensor,
         R: torch.Tensor,
-        huber_delta: float = 0.3,
+        huber_k: float = 1.5,
         alpha: float = 1e-3,
+        max_step: float = 10.0,  # 🔧 新增：最大步长约束
     ):
         super().__init__()
         self.register_buffer("T", T.float())
         self.register_buffer("R", R.float())
-        self.delta = huber_delta
+        self.huber_k = huber_k
         self.alpha = alpha
+        self.max_step = max_step
 
-    # ---------- 内部工具 ---------- #
     @staticmethod
     def _unit(vec: torch.Tensor) -> torch.Tensor:
         return vec / vec.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
     def _gn_step(self, J: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
-        单步 Gauss–Newton with Huber-IRLS & Tikhonov
+        单步 GN + 自适应 Huber
         J : (B,3,Dim), y : (B,3)
         return (B,Dim)
         """
-        # 1) Huber 权
-        w = _huber_weight(-y, self.delta)           # 初始残差取 0 → r = -y
-        WJ = w.unsqueeze(-1) * J                    # (B,3,Dim)
-        Wy = w * y                                  # (B,3)
+        # 🔧 改进1：自适应 Huber 权重
+        w = _adaptive_huber_weight(-y, self.huber_k)
+        WJ = w.unsqueeze(-1) * J
+        Wy = w * y
 
-        # 2) 正则化解  (JᵀJ+αI)⁻¹ Jᵀy
-        JTJ = WJ.transpose(1, 2) @ WJ               # (B,Dim,Dim)
+        # 正则化解
+        JTJ = WJ.transpose(1, 2) @ WJ
         JTJ_reg = JTJ + self.alpha * torch.eye(DIM, device=J.device)
-        JTy = WJ.transpose(1, 2) @ Wy.unsqueeze(-1)  # (B,Dim,1)
+        JTy = WJ.transpose(1, 2) @ Wy.unsqueeze(-1)
 
-        # Cholesky 求解
-        L = torch.linalg.cholesky(JTJ_reg)          # (B,Dim,Dim)
-        sol = torch.cholesky_solve(JTy, L).squeeze(-1)  # (B,Dim)
+        try:
+            L = torch.linalg.cholesky(JTJ_reg)
+            sol = torch.cholesky_solve(JTy, L).squeeze(-1)
+        except:
+            # 🔧 改进2：失败时用 lstsq
+            sol = torch.linalg.lstsq(JTJ_reg, JTy).solution.squeeze(-1)
+
+        # 🔧 改进3：步长约束
+        step_norm = sol.norm(dim=-1, keepdim=True) + 1e-8
+        scale = torch.clamp(self.max_step / step_norm, max=1.0)
+        sol = sol * scale
+
         return sol
 
-    # ---------- 前向 ---------- #
     def forward(self, p_prev: torch.Tensor, feats: torch.Tensor) -> torch.Tensor:
         """
-        返回 Δp_lin  (B,Dim)
+        返回 Δp_lin (B,Dim)
         """
-        phi = feats[:, :3]     # 相位差 rad
-        fD  = feats[:, 3:]     # 多普勒 Hz
+        phi = feats[:, :3]
 
-        # ---------- 构造 J ----------
-        u_AT = self._unit(p_prev - self.T)                  # (B,Dim)
-        u_AR = self._unit(p_prev.unsqueeze(1) - self.R)     # (B,3,Dim)
-        J = u_AT.unsqueeze(1) + u_AR                        # (B,3,Dim)
+        # 构造 Jacobian（保留旧模型的简单方案）
+        u_AT = self._unit(p_prev - self.T)
+        u_AR = self._unit(p_prev.unsqueeze(1) - self.R)
+        J = u_AT.unsqueeze(1) + u_AR  # (B,3,Dim)
 
-        # ---------- 右端 ----------
-        d = LAMBDA * phi / (4.0 * math.pi)                  # (B,3)
-        # 如需速度同法构 b = -λ fD
+        # 右端
+        d = LAMBDA * phi / (4.0 * math.pi)
 
-        # ---------- 解 Δp ----------
-        delta_p = self._gn_step(J, d)                       # (B,Dim)
+        # 解 Δp
+        delta_p = self._gn_step(J, d)
         return delta_p
 
 
 # ============================================================
-# 2.  SE-ResMLP Block
+# 2. 几何特征提取器
+# ============================================================
+
+class GeometricFeatureExtractor(nn.Module):
+    """提取几何特征增强 MLP"""
+
+    def __init__(self, T: torch.Tensor, R: torch.Tensor):
+        super().__init__()
+        self.register_buffer("T", T.float())
+        self.register_buffer("R", R.float())
+
+    def forward(self, p: torch.Tensor) -> torch.Tensor:
+        """
+        返回几何特征:
+        - dist_T: 到发射机距离
+        - dist_R: 到各接收机距离 (3个)
+        - angle_T: 与发射机的角度（2D情况）
+        """
+        dist_T = (p - self.T).norm(dim=-1, keepdim=True)
+        dist_R = (p.unsqueeze(1) - self.R).norm(dim=-1)
+
+        if DIM == 2:
+            vec_T = p - self.T
+            angle_T = torch.atan2(vec_T[:, 1], vec_T[:, 0]).unsqueeze(-1)
+            # 🔧 归一化特征
+            dist_T_norm = dist_T / 100.0  # 假设范围 0-100m
+            dist_R_norm = dist_R / 100.0
+            geo_feats = torch.cat([dist_T_norm, dist_R_norm, 
+                                   torch.sin(angle_T), torch.cos(angle_T)], dim=-1)
+        else:
+            geo_feats = torch.cat([dist_T, dist_R], dim=-1)
+
+        return geo_feats
+
+
+# ============================================================
+# 3. SE-ResMLP Block（保留不变）
 # ============================================================
 
 class SEResBlock(nn.Module):
@@ -134,7 +176,6 @@ class SEResBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = x
         y = self.d1(self.norm(self.act(self.fc1(x))))
-        # SE
         w = self.se_e(self.se_a(self.se_r(y.mean(0, keepdim=True)))).sigmoid()
         y = y * w
         y = self.d2(self.fc2(y))
@@ -142,19 +183,30 @@ class SEResBlock(nn.Module):
 
 
 # ============================================================
-# 3.  误差补偿 MLP
+# 4. 增强的残差 MLP
 # ============================================================
 
-class ResidualMLP(nn.Module):
+class EnhancedResidualMLP(nn.Module):
+    """
+    增强的 MLP：
+    输入 = [原始特征(6), Δp_lin(Dim), 几何特征(6)]
+    """
+
     def __init__(
         self,
-        dim_in: int,
+        T: torch.Tensor,
+        R: torch.Tensor,
         embed: int = 64,
         depth: int = 4,
         hid_ratio: float = 2.5,
         drop: float = 0.1,
     ):
         super().__init__()
+        self.geo_extractor = GeometricFeatureExtractor(T, R)
+
+        # 输入维度：feats(6) + Δp_lin(Dim) + geo(6)
+        dim_in = 6 + DIM + 6
+
         self.embed = nn.Linear(dim_in, embed, bias=False)
         hidden = int(embed * hid_ratio)
         self.blocks = nn.Sequential(
@@ -162,29 +214,39 @@ class ResidualMLP(nn.Module):
         )
         self.head = nn.Linear(embed, DIM)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        feats: torch.Tensor,
+        delta_p_lin: torch.Tensor,
+        p_current: torch.Tensor
+    ) -> torch.Tensor:
+        """返回 Δp_corr"""
+        geo_feats = self.geo_extractor(p_current)
+
+        x = torch.cat([feats, delta_p_lin, geo_feats], dim=-1)
         x = F.gelu(self.embed(x))
         x = self.blocks(x)
-        return self.head(x)
+
+        delta_p_corr = self.head(x)
+        return delta_p_corr
 
 
 # ============================================================
-# 4.  单帧 PINN 模型
+# 5. 单帧模型（增强版）
 # ============================================================
 
 class PinUavModel(nn.Module):
     """
-    输入 :
-        feats  (B,6)    三相位差 + 三多普勒
-        p_prev (B,Dim)  上一帧坐标 (无则 None)
-    输出 :
-        p_hat  (B,Dim)  当前位置估计
+    增强的单帧模型
+    输入: feats (B,6), p_prev (B,Dim)
+    输出: p_hat (B,Dim)
     """
 
-    def __init__(self, T: torch.Tensor, R: torch.Tensor):
+    def __init__(self, T: torch.Tensor, R: torch.Tensor, max_pos: float = 150.0):
         super().__init__()
-        self.ls = LeastSquaresLayer(T, R)
-        self.refine = ResidualMLP(dim_in=6 + DIM)
+        self.ls = ImprovedLeastSquaresLayer(T, R, max_step=10.0)
+        self.refine = EnhancedResidualMLP(T, R)
+        self.max_pos = max_pos
 
     def forward(
         self,
@@ -192,23 +254,44 @@ class PinUavModel(nn.Module):
         p_prev: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if p_prev is None:
-            p_prev = torch.zeros(feats.size(0), DIM, device=feats.device)
+            # 🔧 改进：使用更好的初始猜测
+            p_prev = self._get_initial_guess(feats)
 
-        Δp_lin = self.ls(p_prev, feats)                  # 物理层
-        inp    = torch.cat([feats, Δp_lin], dim=-1)
-        Δp_corr = self.refine(inp)                       # MLP 校正
-        p_hat   = p_prev + Δp_lin + Δp_corr
+        delta_p_lin = self.ls(p_prev, feats)
+        p_current = p_prev + delta_p_lin
+
+        delta_p_corr = self.refine(feats, delta_p_lin, p_current)
+
+        p_hat = p_current + delta_p_corr
+
+        # 🔧 温和约束（避免过度限制）
+        p_hat = torch.tanh(p_hat / self.max_pos) * self.max_pos
+
         return p_hat
+
+    def _get_initial_guess(self, feats: torch.Tensor) -> torch.Tensor:
+        """
+        基于相位差的粗估计
+        假设目标在 30-80m 范围内
+        """
+        B = feats.size(0)
+        # 简单策略：随机初始化在合理范围内
+        r = torch.rand(B, 1, device=feats.device) * 50 + 30  # 30-80m
+        theta = torch.rand(B, 1, device=feats.device) * 2 * math.pi
+        x = r * torch.cos(theta)
+        y = r * torch.sin(theta)
+        return torch.cat([x, y], dim=1)
 
 
 # ============================================================
-# 5.  时序版本  (LSTM + PINN)
+# 6. 时序模型（保留原版结构 + 使用改进物理层）
 # ============================================================
 
 class PinUavSeqModel(nn.Module):
     """
-    输入 : feats (B,Seq,6)
-    输出 : p_hat (B,Seq,Dim)
+    时序模型
+    输入: feats (B,Seq,6)
+    输出: p_hat (B,Seq,Dim)
     """
 
     def __init__(
@@ -220,8 +303,11 @@ class PinUavSeqModel(nn.Module):
         drop: float = 0.1,
     ):
         super().__init__()
-        self.ls_layer = LeastSquaresLayer(T, R)
-        self.embed = nn.Linear(6 + DIM, 96, bias=False)
+        self.ls_layer = ImprovedLeastSquaresLayer(T, R, max_step=10.0)
+        self.geo_extractor = GeometricFeatureExtractor(T, R)
+
+        dim_in = 6 + DIM + 6
+        self.embed = nn.Linear(dim_in, 96, bias=False)
         self.lstm = nn.LSTM(
             input_size=96,
             hidden_size=lstm_hidden,
@@ -240,22 +326,31 @@ class PinUavSeqModel(nn.Module):
         if p_prev0 is None:
             p_prev0 = torch.zeros(B, DIM, device=feats.device)
 
-        # -------- 物理层游程 (Δp_lin) & LSTM 输入 --------
+        # 物理层 + 几何特征
         p_prev = p_prev0
         lstm_in = []
-        Δp_ls_all = []
-        for t in range(S):
-            Δp_ls_t = self.ls_layer(p_prev, feats[:, t])
-            Δp_ls_all.append(Δp_ls_t)
-            lstm_in.append(torch.cat([feats[:, t], Δp_ls_t], dim=-1))
-            p_prev = p_prev + Δp_ls_t
-        lstm_in = torch.stack(lstm_in, dim=1)      # (B,S,6+Dim)
-        Δp_ls_all = torch.stack(Δp_ls_all, dim=1)  # (B,S,Dim)
+        delta_p_ls_all = []
 
-        # -------- LSTM 校正 --------
+        for t in range(S):
+            delta_p_ls_t = self.ls_layer(p_prev, feats[:, t])
+            p_current = p_prev + delta_p_ls_t
+
+            geo_feats = self.geo_extractor(p_current)
+
+            lstm_in_t = torch.cat([feats[:, t], delta_p_ls_t, geo_feats], dim=-1)
+            lstm_in.append(lstm_in_t)
+            delta_p_ls_all.append(delta_p_ls_t)
+
+            p_prev = p_current
+
+        lstm_in = torch.stack(lstm_in, dim=1)
+        delta_p_ls_all = torch.stack(delta_p_ls_all, dim=1)
+
+        # LSTM 校正
         x = F.gelu(self.embed(lstm_in))
         x, _ = self.lstm(x)
-        Δp_corr = self.head(x)                     # (B,S,Dim)
+        delta_p_corr = self.head(x)
 
-        p_hat = p_prev0.unsqueeze(1) + Δp_ls_all.cumsum(dim=1) + Δp_corr
+        p_hat = p_prev0.unsqueeze(1) + delta_p_ls_all.cumsum(dim=1) + delta_p_corr
+
         return p_hat
